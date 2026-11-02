@@ -145,7 +145,7 @@ jobs:
         run: |
           vpk pack --packId ${{ steps.plan.outputs.packid }} --packVersion ${{ steps.plan.outputs.version }} `
             --packDir dist\Copilot --mainExe Copilot.exe --packTitle "Copilot" --packAuthors "Copilot" `
-            --icon desktop\assets\copilot.ico --channel ${{ steps.plan.outputs.channel }} --framework webview2
+            --icon desktop\assets\copilot.ico --channel ${{ steps.plan.outputs.channel }} --framework webview2 --runtime win-x64
 
       - name: Keep the installer as a build artifact
         uses: actions/upload-artifact@v4
