@@ -28,11 +28,11 @@ def places_db(path, name):
 
 
 def locked_on_this_os():
-    """Make os.replace behave like Windows (target in use) on other systems."""
+    """Make os.replace fail as Windows does when the target is in use, on every system, until released."""
     real = os.replace
 
     def fake(src, dst):
-        if sys.platform != "win32" and str(dst).endswith(".sqlite") and not getattr(fake, "released", False):
+        if str(dst).endswith(".sqlite") and not getattr(fake, "released", False):
             raise PermissionError(32, "The process cannot access the file because it is being used")
         return real(src, dst)
     return fake

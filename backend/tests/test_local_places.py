@@ -67,5 +67,7 @@ async def test_provider_reopens_after_dataset_swap(provider, tmp_path):
                 ("z", "New Tenant", "shop", "13 Trinity St", "Coventry", "CV1 1FJ", "02476999999", "", 0.9, None, 52.4093, -1.5097, "meta"))
     con.commit()
     con.close()
+    if os.name == "nt":  # Windows can't replace an open file; the app releases it first (refresh.install_ready)
+        provider.close()
     os.replace(new, provider.db_path)
     assert [c.name for c in await provider.candidates(REC)] == ["New Tenant"]

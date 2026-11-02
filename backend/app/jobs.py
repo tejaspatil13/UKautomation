@@ -5,6 +5,7 @@ are persisted to SQLite after every stage, so a restart or a provider outage nev
 completed work, and a retry only re-runs the lookups that failed.
 """
 import asyncio
+import contextlib
 import logging
 import sqlite3
 import time
@@ -91,7 +92,8 @@ class JobManager:
         if not path.exists():
             return
         try:
-            with sqlite3.connect(path, timeout=30) as con:
+            # closed before the rename below: Windows can't rename a file that is still open
+            with contextlib.closing(sqlite3.connect(path, timeout=30)) as con:
                 ok = con.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         except sqlite3.DatabaseError:
             ok = False
