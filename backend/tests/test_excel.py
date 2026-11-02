@@ -102,3 +102,69 @@ def test_about_sheet_is_added_after_results(tmp_path):
     wb = openpyxl.load_workbook(out)
     assert wb.sheetnames == ["Results", "About"]
     assert wb["About"]["B1"].value == "town=Coventry" and wb["About"]["B2"].value == "'=1+1"
+
+
+def test_business_with_several_entries_is_one_row_with_every_rv_and_record(tmp_path):
+    from app.grouping import group_records
+
+    out = tmp_path / "out.xlsx"
+    rows = group_records([
+        rec(uarn="1", rv=13500), rec(uarn="2", rv=37750), rec(uarn="3", rv=18500),
+        rec(uarn="4", business_name="Other Shop", phone="+44 24 7600 1111", rv=9000),
+    ], "LONDON")
+    assert [len(r.properties) for r in rows] == [3, 1]
+    write_workbook(TEMPLATE, out, rows, "RV")
+    ws = openpyxl.load_workbook(out).active
+    assert len(ws["A"]) == 3
+    assert ws["C2"].value == "£37,750 / £18,500 / £13,500" and ws["C3"].value == 9000
+    assert ws["L2"].value == "£37,750 record" and ws["L2"].hyperlink.target.endswith("/start/2")
+    headers = [c.value for c in ws[1]]
+    g2, g3 = headers.index("Gov.uk record 2") + 1, headers.index("Gov.uk record 3") + 1
+    assert ws.cell(2, g2).hyperlink.target.endswith("/start/3") and ws.cell(2, g3).value == "£13,500 record"
+    assert ws.cell(3, g2).value is None
+    assert ws["N2"].value == "2, 3, 1"
+
+
+def test_owner_columns(tmp_path):
+    from app.companies.house import CompanyMatch
+    from app.excel import ExportRow
+
+    out = tmp_path / "out.xlsx"
+    co = CompanyMatch(company_name="GAMES WORKSHOP LIMITED", company_number="01467092",
+                      registered_address="Willow Road, Nottingham, NG7 2WS", owners=[], directors=["Kevin Rountree"])
+    write_workbook(TEMPLATE, out, [ExportRow(rec(), company=co)], "RV", owners=True)
+    ws = openpyxl.load_workbook(out).active
+    headers = [c.value for c in ws[1]]
+    assert headers[5:9] == ["Status", "Owner / director", "Company name", "Company number"]
+    assert ws["G2"].value == "Kevin Rountree" and ws["I2"].value == "01467092"
+    link = ws.cell(2, headers.index("Companies House") + 1)
+    assert link.hyperlink.target.endswith("/company/01467092")
+    assert ws.cell(2, headers.index("People (role, since)") + 1).value == "Kevin Rountree"
+
+
+def test_business_centre_units_stay_separate_and_are_labelled(tmp_path):
+    from app.grouping import group_records
+
+    guess = dict(match_reasons=["postcode matches", "3 other business(es) also at this address — confirm who answers"],
+                 building_businesses=40, address="Suite 6.01 6th Flr 46-48, East Smithfield, London, E1W 1AW")
+    units = [rec(uarn="1", rv=42250, number_or_name="Suite 6.01 6th Flr 46-48", **guess),
+             rec(uarn="2", rv=35250, number_or_name="Suite 6.02 6th Flr 46-48", **guess)]
+    assert units[0].shared_building == 40
+    rows = group_records(units)
+    assert [len(r.properties) for r in rows] == [1, 1]  # one row per unit on screen and in Excel
+    from app.grouping import group_rows
+    from app.excel import ExportRow
+    assert [len(r.properties) for r in group_rows([ExportRow(u) for u in units], merge_shared=True)] == [2]
+
+    out = tmp_path / "out.xlsx"
+    write_workbook(TEMPLATE, out, rows, "RV")
+    ws = openpyxl.load_workbook(out).active
+    assert ws["H2"].value == ("Shared building: 40 businesses listed here. The business name is the most likely one, "
+                              "not confirmed - ask who is in Suite 6.01 6th Flr 46-48.")
+
+
+def test_shared_building_count_recovered_for_older_records():
+    old = rec(match_reasons=["2 other business(es) also at this address — confirm who answers"],
+              match_note="Same building number and postcode; 5 other business(es) at this address")
+    assert old.shared_building == 6
+    assert rec(match_note="Same building number and postcode; 5 other business(es) at this address").shared_building == 0

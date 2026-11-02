@@ -70,7 +70,7 @@ def test_full_search_excel_has_only_properties_with_phone(make_client):
         assert job["state"] == "completed", job
         s = job["summary"]
         assert (s["source_records"], s["phones_found"], s["verified"], s["no_contact"]) == (4, 2, 2, 2)
-        assert "2 have a phone number" in job["message"]
+        assert "2 leads are in the Excel file" in job["message"]
 
         # The dashboard still shows every listed property with its status...
         assert client.get(f"/api/jobs/{job['id']}/records").json()["total"] == 4

@@ -36,10 +36,19 @@ class LocalPlacesProvider:
         if not record.postcode:
             return []
         async with self._lock:  # one shared read-only connection; lookups take well under 1 ms
-            if os.stat(self.db_path).st_ino != self._inode:  # a refresh swapped in a new file
+            if self._con is None:  # closed so a refresh could swap in a new file
+                self._open()
+            elif os.stat(self.db_path).st_ino != self._inode:  # a refresh swapped in a new file
                 self._con.close()
                 self._open()
             return list(self._for_postcode(record.postcode))
+
+    def close(self) -> None:
+        """Release the file (Windows can't replace an open file). Called on the event loop, so it never
+        interrupts a lookup; the next lookup opens the file again."""
+        if self._con is not None:
+            self._con.close()
+            self._con = None
 
     @lru_cache(maxsize=8192)
     def _for_postcode(self, postcode: str) -> tuple[ContactCandidate, ...]:

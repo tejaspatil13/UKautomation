@@ -157,7 +157,7 @@ def score_candidate(rec: PropertyRecord, cand: ContactCandidate) -> tuple[int, l
     return score, why
 
 
-MAX_OTHERS = 5
+MAX_OTHERS = 40  # business centres: keep every number in the building, none is lost as a lead
 
 
 class Match(NamedTuple):
@@ -168,6 +168,7 @@ class Match(NamedTuple):
     reasons: list[str]
     others: list[str]  # "Name: phone" for other plausible businesses at the address
     note: str = ""  # one short, plain-English line for the dashboard / Excel
+    building_businesses: int = 0  # businesses listed in the same building (incl. the pick)
 
 
 def _note(why: list[str], phone: str, others: list[str]) -> str:
@@ -218,6 +219,8 @@ def choose(rec: PropertyRecord, candidates: list[ContactCandidate]) -> Match:
         if c is not best and p and p not in seen and "building number differs" not in w:
             others.append(f"{c.name}: {p}")
             seen.add(p)
+    # Every business listed in the same building, with or without a phone (including the pick).
+    building_businesses = len({name_key(c.name) for _, w, c, _ in plausible if "building number differs" not in w})
     others = others[:MAX_OTHERS]
     rivals = [c for s, _, c, p in close if c is not best and name_key(c.name) != name_key(best.name)
               and p != phone]
@@ -228,8 +231,8 @@ def choose(rec: PropertyRecord, candidates: list[ContactCandidate]) -> Match:
         return Match(ContactStatus.NO_CONTACT, best, "", score, [*why, "no phone listed for any business here"], [], _note(why, "", []))
     if best_t not in close:
         why.append("highest-scoring business has no phone; using the next best listing")
-        return Match(ContactStatus.REVIEW, best, phone, score, why, others, _note(why, phone, others))
+        return Match(ContactStatus.REVIEW, best, phone, score, why, others, _note(why, phone, others), building_businesses)
     if rivals or score < PROBABLE_MIN:
-        return Match(ContactStatus.REVIEW, best, phone, score, why, others, _note(why, phone, others))
+        return Match(ContactStatus.REVIEW, best, phone, score, why, others, _note(why, phone, others), building_businesses)
     status = ContactStatus.VERIFIED if score >= VERIFIED_MIN else ContactStatus.PROBABLE
-    return Match(status, best, phone, score, why, others, _note(why, phone, others))
+    return Match(status, best, phone, score, why, others, _note(why, phone, others), building_businesses)

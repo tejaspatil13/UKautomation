@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, Job, Meta, PhoneFilter, ResultRecord, SearchRequest } from "./api";
+import { api, ApiError, BusinessRow, Job, Meta, PhoneFilter, SearchRequest } from "./api";
 import { Combobox } from "./Combobox";
 import { RecordsTable } from "./RecordsTable";
 import { ConfirmDialog, DownloadDialog, fileSafe, today, when } from "./ui";
@@ -189,7 +189,7 @@ export function SearchView({ meta, employee, toast, onSheetChanged }: {
         <DownloadDialog
           open={downloadOpen}
           defaultName={fileSafe(`${employee} - ${[job.request.town, job.request.postcode, job.request.description_code].filter(Boolean).join(" ").toUpperCase()} - ${today()}`)}
-          summary={`${job.summary.phones_found.toLocaleString()} properties with a phone number from ${job.label}.`}
+          summary={`${(job.summary.businesses || job.summary.phones_found).toLocaleString()} leads from ${job.label}.`}
           onDownload={(name) => api.downloadJob(job.id, name)}
           onClose={() => setDownloadOpen(false)}
         />
@@ -221,14 +221,14 @@ function JobPanel({ job, onAdd, onDownload, onRetry }: {
             <p className="tally">
               <span className="mono">{s.source_records.toLocaleString()}</span> listed properties
               <span className="sep">/</span>
-              <span className="mono good">{s.phones_found.toLocaleString()}</span> with a phone number
+              <span className="mono good">{(s.businesses || s.phones_found).toLocaleString()}</span> leads
               {job.duration_seconds != null && <span className="muted"> · {job.duration_seconds.toFixed(1)}s</span>}
             </p>
           )}
         </div>
         {!active && s.phones_found > 0 && (
           <div className="job-actions">
-            <button type="button" className="btn btn-primary" onClick={onAdd}>Add {s.phones_found} to My sheet</button>
+            <button type="button" className="btn btn-primary" onClick={onAdd}>Add {s.businesses || s.phones_found} to My sheet</button>
             <button type="button" className="btn" onClick={onDownload}>Download Excel</button>
           </div>
         )}
@@ -257,13 +257,13 @@ function JobPanel({ job, onAdd, onDownload, onRetry }: {
 function JobResults({ jobId }: { jobId: string }) {
   const [filter, setFilter] = useState<PhoneFilter>("with");
   const [page, setPage] = useState(0);
-  const [data, setData] = useState<{ total: number; items: ResultRecord[] } | null>(null);
+  const [data, setData] = useState<{ total: number; items: BusinessRow[] } | null>(null);
   useEffect(() => setPage(0), [filter, jobId]);
   useEffect(() => {
     api.records(jobId, filter, page * PAGE, PAGE).then(setData).catch(() => setData({ total: 0, items: [] }));
   }, [jobId, filter, page]);
   const pages = data ? Math.ceil(data.total / PAGE) : 0;
-  const tabs: [PhoneFilter, string][] = [["with", "With phone"], ["without", "Without phone"], ["", "All"]];
+  const tabs: [PhoneFilter, string][] = [["with", "Leads"], ["without", "No contact found"], ["", "All"]];
   return (
     <>
       <div className="segmented" role="tablist" aria-label="Show">

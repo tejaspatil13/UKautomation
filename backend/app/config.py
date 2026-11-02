@@ -18,10 +18,12 @@ class Settings(BaseSettings):
     voa_list_url: str = ""
     voa_list_year: int = 2026
 
-    # Background data refresh (in-process, atomic swap). 0 disables. VO publishes ~every 2 months,
-    # Overture ~monthly. auto_import_on_start builds missing datasets on first boot.
-    refresh_voa_days: int = 30
-    refresh_places_days: int = 30
+    # Automatic updates: check daily whether the VO or Overture has published new data, and install
+    # it during the night window (local time, "HH-HH"). auto_import_on_start builds missing datasets
+    # straight away on first boot.
+    auto_refresh: bool = True
+    refresh_check_hours: int = 24
+    refresh_window: str = "01-05"
     auto_import_on_start: bool = False
 
     # Limits
@@ -29,10 +31,16 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 2
     export_retention_hours: int = 72
 
+    # Companies House (owner names). Empty = read the public website; a free API key is faster and
+    # more reliable: https://developer.company-information.service.gov.uk/
+    companies_house_api_key: str = ""
+
     # Optional shared password for the dashboard (HTTP Basic). Empty = no auth (local use only).
     app_password: str = ""
 
     log_level: str = "INFO"
+    # Output of the dataset import subprocesses (desktop app: a file, shown as progress). Empty = inherit.
+    import_log_path: Path | None = None
 
     @property
     def voa_db_path(self) -> Path:
@@ -41,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def places_db_path(self) -> Path:
         return self.data_dir / "places.sqlite"
+
+    @property
+    def companies_db_path(self) -> Path:
+        return self.data_dir / "companies.sqlite"
 
     @property
     def app_db_path(self) -> Path:

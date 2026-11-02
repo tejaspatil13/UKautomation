@@ -12,3 +12,10 @@ data/
 khushi new*.xlsx
 *.xlsx
 !templates/output_template.xlsx
+# Desktop build outputs (desktop/build_config.json is written per channel by the build)
+build/
+dist/
+desktop/build_config.json
+license-server/node_modules/
+license-server/.wrangler/
+license-server/.dev.vars

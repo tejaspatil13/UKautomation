@@ -1,0 +1,164 @@
+# Windows desktop build: test → package → self-test the packaged app → publish.
+#
+#   push to main            → tests, Windows build, then a TEST release (GitHub pre-release, "test" update
+#                             channel). Only test builds (your Windows PC) update from it.
+#   pull request            → tests and build only; nothing is published.
+#   Run workflow → "stable" → the CLIENT release: version from desktop/VERSION, production licence server,
+#                             "stable" update channel. Runs in the "production" environment, so it can be
+#                             made to wait for your approval (Settings → Environments → production).
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables), all public values:
+#   LICENSE_URL_TEST, LICENSE_PUBLIC_KEY_TEST, LICENSE_URL_PRODUCTION, LICENSE_PUBLIC_KEY_PRODUCTION
+name: Windows desktop build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "What to publish"
+        type: choice
+        options: [test, stable]
+        default: test
+
+permissions:
+  contents: write  # publish GitHub Releases
+
+concurrency:
+  group: windows-build-${{ github.ref }}-${{ inputs.release || 'auto' }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  VPK_VERSION: "1.2.161"  # same as the velopack Python package (desktop/requirements.txt)
+
+jobs:
+  build:
+    runs-on: windows-latest
+    environment: ${{ inputs.release == 'stable' && 'production' || 'test' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements*.txt
+            desktop/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Decide channel and version
+        id: plan
+        env:
+          HAS_TEST_LICENSE: ${{ vars.LICENSE_URL_TEST != '' && vars.LICENSE_PUBLIC_KEY_TEST != '' }}
+          HAS_PRODUCTION_LICENSE: ${{ vars.LICENSE_URL_PRODUCTION != '' && vars.LICENSE_PUBLIC_KEY_PRODUCTION != '' }}
+        run: |
+          $base = (Get-Content desktop/VERSION -Raw).Trim()
+          $release = "${{ inputs.release }}"
+          if ($release -eq "stable") {
+            $channel = "stable"; $version = $base; $publish = "true"
+            if (git tag --list "v$version") { throw "v$version was already released. Raise desktop/VERSION first." }
+            if ($env:HAS_PRODUCTION_LICENSE -ne "true") { throw "Set LICENSE_URL_PRODUCTION and LICENSE_PUBLIC_KEY_PRODUCTION first (docs/desktop/LICENSING_GUIDE.md)." }
+          } else {
+            $channel = "test"; $version = "$base-test.${{ github.run_number }}"
+            $publish = if ("${{ github.event_name }}" -eq "pull_request") { "false" } else { "true" }
+            if ($env:HAS_TEST_LICENSE -ne "true") {
+              Write-Warning "No test licence server configured yet: building and testing only, not publishing."
+              $publish = "false"
+            }
+          }
+          $suffix = if ($channel -eq "stable") { "PRODUCTION" } else { "TEST" }
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "publish=$publish" >> $env:GITHUB_OUTPUT
+          "suffix=$suffix" >> $env:GITHUB_OUTPUT
+          "packid=$(if ($channel -eq 'stable') { 'CopilotApp' } else { 'CopilotAppTest' })" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $channel $version (publish: $publish)"
+
+      - name: Build the dashboard
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r desktop/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Backend tests (on Windows)
+        working-directory: backend
+        run: python -m pytest -q
+
+      - name: Desktop tests (on Windows)
+        working-directory: desktop
+        run: python -m pytest -q
+
+      - name: Prepare build configuration
+        env:
+          LICENSE_URL: ${{ vars[format('LICENSE_URL_{0}', steps.plan.outputs.suffix)] }}
+          LICENSE_KEY: ${{ vars[format('LICENSE_PUBLIC_KEY_{0}', steps.plan.outputs.suffix)] }}
+        run: |
+          if (-not $env:LICENSE_URL -or -not $env:LICENSE_KEY) {  # unpublished test build: placeholder server
+            $env:LICENSE_URL = "https://licence.invalid"; $env:LICENSE_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          }
+          python desktop/prepare_build.py --channel ${{ steps.plan.outputs.channel }} --version ${{ steps.plan.outputs.version }} `
+            --license-url $env:LICENSE_URL --license-public-key $env:LICENSE_KEY `
+            --update-repo "${{ github.server_url }}/${{ github.repository }}"
+
+      - name: Package with PyInstaller
+        run: pyinstaller desktop/copilot.spec --noconfirm --distpath dist --workpath build/pyinstaller
+
+      - name: Self-test the packaged app (no Python involved)
+        run: |
+          $env:COPILOT_HOME = "$env:RUNNER_TEMP\copilot-selftest"
+          $p = Start-Process -FilePath dist\Copilot\Copilot.exe -ArgumentList "--self-test" -Wait -PassThru
+          Get-Content "$env:COPILOT_HOME\logs\selftest.json" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) {
+            Get-Content "$env:COPILOT_HOME\logs\copilot.log" -Tail 80 -ErrorAction SilentlyContinue
+            throw "Packaged app self-test failed (exit $($p.ExitCode))"
+          }
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version $env:VPK_VERSION
+
+      - name: Previous release (for small delta updates)
+        if: steps.plan.outputs.publish == 'true'
+        continue-on-error: true  # nothing to download before the first release
+        run: vpk download github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --channel ${{ steps.plan.outputs.channel }} --token "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Create installer and update packages
+        run: |
+          vpk pack --packId ${{ steps.plan.outputs.packid }} --packVersion ${{ steps.plan.outputs.version }} `
+            --packDir dist\Copilot --mainExe Copilot.exe --packTitle "Copilot" --packAuthors "Copilot" `
+            --icon desktop\assets\copilot.ico --channel ${{ steps.plan.outputs.channel }} --framework webview2
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Copilot-${{ steps.plan.outputs.channel }}-${{ steps.plan.outputs.version }}
+          path: Releases/
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          $extra = @()
+          if ("${{ steps.plan.outputs.channel }}" -eq "test") { $extra += "--pre" }  # test builds: pre-releases
+          vpk upload github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" `
+            --channel ${{ steps.plan.outputs.channel }} --publish @extra `
+            --releaseName "Copilot ${{ steps.plan.outputs.version }}" --tag "v${{ steps.plan.outputs.version }}"

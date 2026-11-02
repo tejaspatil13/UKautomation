@@ -1,0 +1,17 @@
+{
+  "name": "copilot-license-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Licence server for the Copilot desktop app (Cloudflare Worker + D1).",
+  "scripts": {
+    "dev": "wrangler dev --env test --local --port 8787",
+    "db:init:local": "wrangler d1 execute copilot-license-test --env test --local --file schema.sql",
+    "db:init:test": "wrangler d1 execute copilot-license-test --env test --remote --file schema.sql",
+    "db:init:production": "wrangler d1 execute copilot-license --env production --remote --file schema.sql",
+    "deploy:test": "wrangler deploy --env test",
+    "deploy:production": "wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.1"
+  }
+}

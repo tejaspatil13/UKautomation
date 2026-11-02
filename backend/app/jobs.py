@@ -15,17 +15,24 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.contacts.base import ContactProvider, ProviderError, ProviderRateLimited
-from app.excel import ATTRIBUTION, ExportRow, export_filename, write_workbook
+from app.excel import ATTRIBUTION, export_filename, write_workbook
+from app.grouping import group_records
 from app.matching import choose
 from app.models import (
     ContactStatus, JobState, JobStatus, JobSummary, PropertyRecord, ResultRecord, SearchRequest,
 )
 from app.normalize import house_numbers, street_key
+from app.companies.local import LocalCompanies
+from app.units import is_business_centre, resolve_unit
 from app.voa.repository import DatasetMissingError, VoaRepository
 
 log = logging.getLogger(__name__)
 
 JOB_ID_LEN = 32
+# Bump when the matching rules change: saved results made with older rules are matched again
+# (locally, in about a millisecond each) the next time they are read, so sheets never keep stale picks.
+MATCH_VERSION = 5  # 2: business-centre units go to their confirmed occupier only; 3: building count;
+# 4-5: unit matching also requires the same building
 UK_TZ = ZoneInfo("Europe/London")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -68,6 +75,7 @@ class JobManager:
         self.settings = settings
         self.providers = providers
         self.voa = VoaRepository(settings.voa_db_path)
+        self.companies = LocalCompanies(settings.companies_db_path)
         self._slots = asyncio.Semaphore(settings.max_concurrent_jobs)
         self._lookup_slots = asyncio.Semaphore(8)
         self._tasks: dict[str, asyncio.Task] = {}
@@ -111,7 +119,7 @@ class JobManager:
                 (status.id, status.created_at.isoformat(), status.model_dump_json(), export_name),
             )
 
-    def _save_records(self, job_id: str, records: list[ResultRecord]) -> None:
+    def save_records(self, job_id: str, records: list[ResultRecord]) -> None:
         with self._db() as con:
             con.execute("DELETE FROM job_records WHERE job_id = ?", (job_id,))
             con.executemany(
@@ -256,7 +264,7 @@ class JobManager:
                 f"More than {self.settings.max_results_per_search:,} premises matched; only the first "
                 f"{self.settings.max_results_per_search:,} were processed. Narrow the search (postcode sector or RV range)."
             )
-        self._save_records(status.id, records)
+        self.save_records(status.id, records)
         return records
 
     async def _stage_contacts(self, status: JobStatus, records: list[ResultRecord]) -> None:
@@ -277,11 +285,11 @@ class JobManager:
                 self._progress(status, "Finding contact details", 0.1 + 0.8 * done / total,
                                f"{done:,} of {len(todo):,} premises checked")
             if done % 200 == 0:
-                self._save_records(status.id, records)  # checkpoint for crash recovery
+                self.save_records(status.id, records)  # checkpoint for crash recovery
 
         self._progress(status, "Finding contact details", 0.1, f"0 of {len(todo):,} premises checked")
         await asyncio.gather(*(one(r) for r in todo))
-        self._save_records(status.id, records)
+        self.save_records(status.id, records)
 
     async def _lookup(self, rec: ResultRecord) -> None:
         candidates, failures = [], []
@@ -302,15 +310,35 @@ class JobManager:
             rec.contact_status, rec.match_reasons = ContactStatus.LOOKUP_FAILED, failures
             return
         match = choose(rec, candidates)
+        rec.match_version = MATCH_VERSION
         cand = match.candidate
         rec.contact_status, rec.match_score = match.status, match.score
         rec.match_reasons, rec.phone, rec.other_numbers = match.reasons + failures, match.phone, match.others
         rec.match_note = match.note
+        rec.building_businesses = match.building_businesses
         if cand:
             rec.business_name = cand.name
             rec.business_address = ", ".join(p for p in (cand.address, cand.postcode) if p)
             rec.contact_source, rec.contact_source_url = cand.source, cand.source_url
             rec.contact_address = ", ".join(p for p in (cand.name, cand.address, cand.postcode) if p)
+        if is_business_centre(rec):
+            companies = await asyncio.to_thread(self.companies.at_postcode, rec.postcode)
+            resolve_unit(rec, candidates, companies)
+
+    async def rematch(self, records: list[ResultRecord]) -> list[ResultRecord]:
+        """Match again the records made with older rules (in place). Returns the ones that changed."""
+        stale = [r for r in records if r.match_version < MATCH_VERSION
+                 and r.contact_status not in (ContactStatus.NOT_SEARCHED, ContactStatus.LOOKUP_FAILED)]
+        if not stale or not self.providers:
+            return []
+
+        async def one(rec: ResultRecord) -> None:
+            _reset_match(rec)
+            async with self._lookup_slots:
+                await self._lookup(rec)
+
+        await asyncio.gather(*(one(r) for r in stale))
+        return stale
 
     async def _stage_excel(self, status: JobStatus, records: list[ResultRecord]) -> None:
         s = status.summary
@@ -321,7 +349,9 @@ class JobManager:
             setattr(s, field, sum(r.contact_status == st for r in records))
 
         # Only properties with a contact number go into the spreadsheet.
-        with_phone = [r for r in records if r.phone]
+        # Named businesses with a contact number only (business-centre units with no known occupier are left out).
+        with_phone = [r for r in records if r.is_lead]
+        unknown = sum(r.occupier_unknown for r in records)
         failed_note = f" {s.lookup_failed:,} lookups failed — use Retry to re-run only those." if s.lookup_failed else ""
         if not with_phone:
             status.state, status.stage, status.finished_at = JobState.NO_RESULTS, "Done", utcnow()
@@ -333,6 +363,8 @@ class JobManager:
             return
 
         self._progress(status, "Generating Excel file", 0.95)
+        rows = group_records(with_phone, status.label)
+        s.businesses = len(rows)
         req = status.request
         now = datetime.now(UK_TZ)
         name = export_filename(req.town, req.postcode, now)
@@ -340,15 +372,15 @@ class JobManager:
         about = [
             ("Search", criteria),
             ("Generated", now.strftime("%d %b %Y %H:%M %Z")),
-            ("Counts", f"{s.source_records:,} listed properties; {len(with_phone):,} with a phone number "
-                       f"(in this file); {s.needs_review:,} need review; {s.no_contact:,} no contact; "
+            ("Counts", f"{s.source_records:,} listed properties; {len(with_phone):,} with a phone number, "
+                       f"from {len(rows):,} businesses (one row each, in this file); {s.no_contact:,} no contact; "
                        f"{s.lookup_failed:,} lookup failed"),
             *ATTRIBUTION,
         ]
         try:
             await asyncio.to_thread(
                 write_workbook, self.settings.template_path, self.settings.export_dir / f"{status.id}.xlsx",
-                [ExportRow(r, status.label) for r in with_phone], f"RV ({self.settings.voa_list_year} list)", about,
+                rows, f"RV ({self.settings.voa_list_year} list)", about,
             )
         except Exception:
             log.exception("excel generation failed for job %s", status.id)
@@ -359,10 +391,19 @@ class JobManager:
         status.stage, status.progress, status.finished_at = "Done", 1.0, utcnow()
         status.download_ready = True
         status.message = (
-            f"{s.source_records:,} listed properties searched, {len(with_phone):,} have a phone number "
-            f"and are in the Excel file.{failed_note}"
+            f"{s.source_records:,} listed properties searched; {len(rows):,} leads are in the Excel file"
+            + (f"; {unknown:,} business-centre units left out because their occupier is not known" if unknown else "")
+            + f".{failed_note}"
         )
         self._save_status(status, export_name=name)
+
+
+def _reset_match(rec: ResultRecord) -> None:
+    """Clear everything a previous match filled in, keeping the VO property itself."""
+    fresh = ResultRecord(**PropertyRecord.model_validate(rec.model_dump()).model_dump(exclude={"source_url"}))
+    for field in ResultRecord.model_fields:
+        if field not in PropertyRecord.model_fields:
+            setattr(rec, field, getattr(fresh, field))
 
 
 def is_valid_job_id(job_id: str) -> bool:

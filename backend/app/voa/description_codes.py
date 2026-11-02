@@ -9,7 +9,7 @@ _FILE = Path(__file__).with_name("description_codes.json")
 @lru_cache
 def description_codes() -> dict[str, str]:
     """code -> label, e.g. "CS" -> "CS - Shop and Premises" (117 codes, site order)."""
-    return {o["code"]: o["label"] for o in json.loads(_FILE.read_text())}
+    return {o["code"]: o["label"] for o in json.loads(_FILE.read_text(encoding="utf-8"))}
 
 
 def primary_code(db_code: str) -> str | None:

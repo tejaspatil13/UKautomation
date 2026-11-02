@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 
 from app.config import get_settings
+from app.dbswap import swap_in
 from app.normalize import clean_ws, normalize_postcode
 
 log = logging.getLogger(__name__)
@@ -98,7 +99,9 @@ def _open_list_entries(zip_path: Path) -> tuple[str, io.TextIOWrapper]:
     return names[0], io.TextIOWrapper(zf.open(names[0]), encoding="latin-1", newline="")
 
 
-def import_zip(zip_path: Path, db_path: Path, source_url: str = "", list_year: int | None = None) -> int:
+def import_zip(
+    zip_path: Path, db_path: Path, source_url: str = "", list_year: int | None = None, version: str = "",
+) -> int:
     """Build a fresh DB next to db_path and atomically swap it in. Returns rows imported."""
     tmp_path = db_path.with_suffix(".importing")
     tmp_path.unlink(missing_ok=True)
@@ -124,15 +127,23 @@ def import_zip(zip_path: Path, db_path: Path, source_url: str = "", list_year: i
             "list_year": str(list_year or ""),
             "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "row_count": str(count),
+            "remote_version": version,  # server ETag/Last-Modified, used to spot republished files
         }
         con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
         con.commit()
     finally:
         con.close()
         text.close()
-    os.replace(tmp_path, db_path)
+    swap_in(tmp_path, db_path)
     log.info("VO import complete: %s rows -> %s", f"{count:,}", db_path)
     return count
+
+
+def remote_version(url: str) -> str:
+    """The server's ETag (or Last-Modified) for a file: changes whenever the VO republishes it."""
+    r = httpx.head(url, timeout=30, follow_redirects=True)
+    r.raise_for_status()
+    return r.headers.get("etag") or r.headers.get("last-modified") or ""
 
 
 def download(url: str, dest: Path) -> Path:
@@ -178,7 +189,8 @@ def main() -> None:
         zip_path = args.zip
     else:
         zip_path = download(url, settings.data_dir / "downloads" / Path(url).name)
-    import_zip(zip_path, settings.voa_db_path, source_url=url, list_year=settings.voa_list_year)
+    version = "" if args.zip else remote_version(url)
+    import_zip(zip_path, settings.voa_db_path, source_url=url, list_year=settings.voa_list_year, version=version)
     if not args.zip:
         zip_path.unlink(missing_ok=True)  # the SQLite copy is all we need; keeps the disk small
 

@@ -22,6 +22,7 @@ export interface JobSummary {
   needs_review: number;
   no_contact: number;
   lookup_failed: number;
+  businesses: number;
 }
 
 export interface Job {
@@ -53,13 +54,79 @@ export interface ResultRecord {
   other_numbers: string[];
   business_address: string;
   match_note: string;
+  number_or_name: string;
+  /** Businesses in the building when we can't tell which one is in this unit (0 = clear match). */
+  shared_building: number;
+  /** 0 on older results, which only kept up to 5 other businesses: the count is then a minimum. */
+  building_businesses: number;
+  unit_company: string;
+  occupier_unknown: boolean;
+  phone_label: string;
   source_url: string;
   google_maps_url: string;
 }
 
-export interface SheetRecord extends ResultRecord {
+export interface PropertyRef {
+  uarn: string;
+  rv: number;
+  address: string;
+  description: string;
+  source_url: string;
+}
+
+export interface Person {
+  name: string;
+  role: string;
+  since: string;
+  control: string[];
+  occupation: string;
+  nationality: string;
+}
+
+export interface Company {
+  company_name: string;
+  company_number: string;
+  registered_address: string;
+  incorporated: string;
+  status: string;
+  company_type: string;
+  nature_of_business: string[];
+  owners: Person[];
+  directors: Person[];
+  url: string;
+  owner_names: string;
+}
+
+/** One business: its main VO entry plus every rated entry it occupies. */
+export interface BusinessRow extends ResultRecord {
+  key: string;
   search: string;
-  added: string;
+  added: string | null;
+  uarns: string[];
+  properties: PropertyRef[];
+  company?: Company;
+  owner_checked?: boolean;
+}
+
+export interface OwnerRun {
+  running: boolean;
+  done: number;
+  total: number;
+  found: number;
+  failed: number;
+  blocked: boolean;
+  skipped: number;
+  message: string;
+}
+
+export interface DataUpdate {
+  name: string;
+  installed: string;
+  available: string;
+  update_pending: boolean;
+  updating: boolean;
+  last_checked: string;
+  last_error: string;
 }
 
 export interface Meta {
@@ -68,6 +135,9 @@ export interface Meta {
   max_results_per_search: number;
   export_retention_hours: number;
   description_codes: { code: string; label: string }[];
+  places_dataset: Record<string, string> | null;
+  companies_dataset: Record<string, string> | null;
+  data_updates: DataUpdate[];
 }
 
 export class ApiError extends Error {
@@ -135,7 +205,7 @@ export const api = {
   retry: (id: string) => json<Job>(`/api/jobs/${id}/retry`, { method: "POST" }),
   deleteJob: (id: string) => send(`/api/jobs/${id}`, { method: "DELETE" }),
   records: (id: string, phone: PhoneFilter, offset: number, limit: number) =>
-    json<{ total: number; items: ResultRecord[] }>(
+    json<{ total: number; items: BusinessRow[] }>(
       `/api/jobs/${id}/records?${q({ offset, limit, has_phone: phone ? String(phone === "with") : undefined })}`,
     ),
   downloadJob: async (id: string, filename: string) => {
@@ -143,7 +213,8 @@ export const api = {
     saveBlob(await res.blob(), `${filename}.xlsx`);
   },
 
-  sheet: (employee: string) => json<{ total: number; items: SheetRecord[] }>(`/api/sheet?${q({ employee })}`),
+  sheet: (employee: string) =>
+    json<{ total: number; items: BusinessRow[]; owners: OwnerRun }>(`/api/sheet?${q({ employee })}`),
   sheetAdd: (employee: string, jobId: string) =>
     json<{ added: number; already_in_sheet: number; total: number }>("/api/sheet/add", {
       method: "POST",
@@ -155,11 +226,32 @@ export const api = {
       body: JSON.stringify({ employee, uarns }),
     }),
   sheetClear: (employee: string) => json<{ removed: number }>(`/api/sheet?${q({ employee })}`, { method: "DELETE" }),
-  sheetDownload: async (employee: string, filename: string, uarns: string[] | null) => {
+  sheetDownload: async (employee: string, filename: string, uarns: string[] | null, parts: number) => {
     const res = await send("/api/sheet/download", {
       method: "POST",
-      body: JSON.stringify({ employee, filename, uarns }),
+      body: JSON.stringify({ employee, filename, uarns, parts }),
     });
-    saveBlob(await res.blob(), `${filename}.xlsx`);
+    saveBlob(await res.blob(), `${filename}.${parts > 1 ? "zip" : "xlsx"}`);
   },
+
+  ownersRun: (employee: string, uarns: string[] | null) =>
+    json<OwnerRun>("/api/owners/run", { method: "POST", body: JSON.stringify({ employee, uarns }) }),
+  ownersStatus: (employee: string) => json<OwnerRun>(`/api/owners/status?${q({ employee })}`),
+  customers: (employee: string) => json<{ total: number; items: BusinessRow[] }>(`/api/owners?${q({ employee })}`),
+  customersRemove: (employee: string, keys: string[]) =>
+    json<{ removed: number; total: number }>("/api/owners/remove", {
+      method: "POST",
+      body: JSON.stringify({ employee, keys }),
+    }),
+  customersClear: (employee: string) => json<{ removed: number }>(`/api/owners?${q({ employee })}`, { method: "DELETE" }),
+  customersDownload: async (employee: string, filename: string, keys: string[] | null, parts: number) => {
+    const res = await send("/api/owners/download", {
+      method: "POST",
+      body: JSON.stringify({ employee, filename, keys, parts }),
+    });
+    saveBlob(await res.blob(), `${filename}.${parts > 1 ? "zip" : "xlsx"}`);
+  },
+
+  checkUpdates: () => json<DataUpdate[]>("/api/updates/check", { method: "POST" }),
+  installUpdates: () => json<DataUpdate[]>("/api/updates/install", { method: "POST" }),
 };

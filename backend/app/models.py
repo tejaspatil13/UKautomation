@@ -1,4 +1,5 @@
 """API request/response models."""
+import re
 from datetime import datetime
 from enum import StrEnum
 from urllib.parse import quote_plus
@@ -102,7 +103,39 @@ class ResultRecord(PropertyRecord):
     other_numbers: list[str] = []  # other businesses at the same address, "Name: phone"
     business_address: str = ""  # the address as the business itself lists it (street, town, postcode)
     match_note: str = ""  # one short line explaining the match
+    building_businesses: int = 0  # businesses listed in the same building (0 = not recorded)
+    unit_company: str = ""  # business centre: company Companies House lists at this very unit
+    occupier_unknown: bool = False  # business centre: nobody can be tied to this unit
+    phone_label: str = ""  # e.g. "Building reception: Tower Bridge Business Centre" when it isn't the occupier's
+    match_version: int = 0  # which matching rules produced this result (see jobs.MATCH_VERSION)
     collected_at: datetime | None = None
+
+    @computed_field
+    @property
+    def shared_building(self) -> int:
+        """How many businesses share the building when we can't tell which one occupies this unit (else 0).
+
+        In a business centre the listings say who is in the building, never which suite, so several
+        businesses tie and the name shown is only the most likely one. Older records didn't store the
+        count; it is recovered from their note ("...; 5 other business(es) at this address").
+        """
+        if self.unit_company:
+            return 0  # the unit's occupier is confirmed
+        if not self.occupier_unknown and not any("also at this address" in r for r in self.match_reasons):
+            return 0
+        if self.building_businesses:
+            # One business in the building means the doubt is about the address, not a shared building.
+            return self.building_businesses if self.building_businesses >= 2 else 0
+        m = _OTHERS_IN_NOTE.search(self.match_note)
+        return int(m.group(1)) + 1 if m else 2
+
+    @property
+    def is_lead(self) -> bool:
+        """Goes in the sheet / Excel: a named business with a number to call.
+
+        Business-centre units whose occupier is not known have no name, so they are left out.
+        """
+        return bool(self.phone and self.business_name) and not self.occupier_unknown
 
     @computed_field
     @property
@@ -120,6 +153,9 @@ class ResultRecord(PropertyRecord):
         return "https://www.google.com/maps/search/?api=1&query=" + quote_plus(query)
 
 
+_OTHERS_IN_NOTE = re.compile(r"(\d+) other business")
+
+
 class JobSummary(BaseModel):
     source_records: int = 0
     unique_premises: int = 0
@@ -129,6 +165,7 @@ class JobSummary(BaseModel):
     needs_review: int = 0
     no_contact: int = 0
     lookup_failed: int = 0
+    businesses: int = 0  # distinct businesses with a phone (one Excel row each)
 
 
 class JobStatus(BaseModel):

@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { ResultRecord, SheetRecord } from "./api";
+import { BusinessRow } from "./api";
 import { gbp } from "./ui";
 
-type Row = ResultRecord | SheetRecord;
-
-function Phone({ value }: { value: string }) {
+export function Phone({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   if (!value) return <span className="dash">—</span>;
   async function copy() {
@@ -24,73 +22,87 @@ function Phone({ value }: { value: string }) {
   );
 }
 
-function Others({ list }: { list: string[] }) {
-  if (!list.length) return <span className="dash">—</span>;
-  const [first, ...rest] = list;
-  const line = (o: string) => {
-    const i = o.lastIndexOf(": ");
-    return i < 0 ? o : <><span className="other-name">{o.slice(0, i)}</span> <span className="mono">{o.slice(i + 2)}</span></>;
-  };
+/** Business centre / shared offices: the name shown is only the most likely business in the building. */
+export function SharedTag({ row }: { row: BusinessRow }) {
+  if (row.unit_company) {
+    return (
+      <div className="unit-tag" title={`Companies House lists ${row.unit_company} at ${row.number_or_name}`}>
+        Unit confirmed · Companies House
+      </div>
+    );
+  }
+  if (!row.shared_building) return null;
+  const unit = row.properties.length === 1 ? row.number_or_name : "these units";
   return (
-    <div className="others">
-      <div>{line(first)}</div>
-      {rest.length > 0 && (
-        <details>
-          <summary>{rest.length} more</summary>
-          {rest.map((o) => <div key={o}>{line(o)}</div>)}
-        </details>
+    <div className="shared-tag" title={`The listings show ${row.shared_building}${row.building_businesses ? "" : " or more"} businesses in this building but not which unit each is in. Ask who is in ${unit}.`}>
+      {row.occupier_unknown ? "Business centre" : "Shared building"} · {row.shared_building}{row.building_businesses ? "" : "+"} businesses
+    </div>
+  );
+}
+
+/** Every rateable value the business has, with a link to each one's Gov.uk record underneath. */
+export function RateableValues({ row }: { row: BusinessRow }) {
+  const props = row.properties;
+  return (
+    <div className="rvs">
+      {props.map((p) => <span key={p.uarn} className="rv-value">{gbp(p.rv)}</span>)}
+      {props.length === 1 ? (
+        <a className="sub chip-link" href={props[0].source_url} target="_blank" rel="noreferrer">Gov.uk record ↗</a>
+      ) : (
+        <span className="sub gov-links">
+          Gov.uk records:{" "}
+          {props.map((p, i) => (
+            <a key={p.uarn} href={p.source_url} target="_blank" rel="noreferrer" title={`${gbp(p.rv)} · ${p.address}`}>{i + 1}</a>
+          ))}
+        </span>
       )}
     </div>
   );
 }
 
-export function RecordsTable({ items, onRemove, showSearch = false, empty }: {
-  items: Row[]; onRemove?: (uarn: string) => void; showSearch?: boolean; empty: string;
+export function RecordsTable({ items, onRemove, empty }: {
+  items: BusinessRow[]; onRemove?: (row: BusinessRow) => void; empty: string;
 }) {
+  const cols = 4 + (onRemove ? 1 : 0);
   return (
     <div className="table-wrap">
       <table className="records">
         <thead>
           <tr>
             <th>Business</th>
+            <th>Phone</th>
             <th>Address</th>
             <th className="num">Rateable value</th>
-            <th>Phone</th>
-            <th>Other numbers at this address</th>
             {onRemove && <th><span className="sr-only">Remove</span></th>}
           </tr>
         </thead>
         <tbody>
           {items.map((r) => (
-            <tr key={r.uarn}>
+            <tr key={r.key}>
               <td data-label="Business">
-                <div className="biz">{r.business_name || <span className="dash">No business found</span>}</div>
+                <div className="biz">{r.business_name || <span className="dash">{r.occupier_unknown ? "Occupier not known" : "No business found"}</span>}</div>
                 <div className="sub">{r.description}</div>
-                {showSearch && "search" in r && <div className="sub from">from {r.search}</div>}
+                <SharedTag row={r} />
+              </td>
+              <td data-label="Phone">
+                <Phone value={r.phone} />
+                {r.phone_label && <div className="sub">{r.phone_label}</div>}
               </td>
               <td data-label="Address">
                 <div>{r.business_address || r.address}</div>
-                {r.business_address && <div className="sub vo" title={r.address}>VO record: {r.address}</div>}
-                <div className="links">
-                  <a href={r.source_url} target="_blank" rel="noreferrer" className="chip-link">Gov.uk record ↗</a>
-                  <a href={r.google_maps_url} target="_blank" rel="noreferrer" className="chip-link">Google Maps ↗</a>
-                </div>
+                {(r.shared_building > 0 || r.unit_company) && <div className="sub unit">{r.unit_company ? r.number_or_name : `Ask for: ${r.number_or_name}`}</div>}
+                <a href={r.google_maps_url} target="_blank" rel="noreferrer" className="sub chip-link">Google Maps ↗</a>
               </td>
-              <td data-label="Rateable value" className="num mono rv">{gbp(r.rv)}</td>
-              <td data-label="Phone">
-                <Phone value={r.phone} />
-                {r.match_note && <div className="sub note">{r.match_note}</div>}
-              </td>
-              <td data-label="Other numbers"><Others list={r.other_numbers} /></td>
+              <td data-label="Rateable value" className="num"><RateableValues row={r} /></td>
               {onRemove && (
                 <td className="remove-cell">
-                  <button type="button" className="icon-btn" onClick={() => onRemove(r.uarn)} aria-label={`Remove ${r.business_name || r.address}`} title="Remove from sheet">×</button>
+                  <button type="button" className="icon-btn" onClick={() => onRemove(r)} aria-label={`Remove ${r.business_name || r.address}`} title="Remove">×</button>
                 </td>
               )}
             </tr>
           ))}
           {items.length === 0 && (
-            <tr className="empty-row"><td colSpan={onRemove ? 6 : 5}>{empty}</td></tr>
+            <tr className="empty-row"><td colSpan={cols}>{empty}</td></tr>
           )}
         </tbody>
       </table>

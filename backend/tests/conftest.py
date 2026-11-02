@@ -52,7 +52,7 @@ def vo_zip(tmp_path: Path) -> Path:
 def settings(tmp_path: Path, vo_zip: Path) -> Settings:
     s = Settings(
         data_dir=tmp_path / "data", template_path=TEMPLATE, frontend_dist=tmp_path / "nofrontend",
-        refresh_voa_days=0, refresh_places_days=0, auto_import_on_start=False,
+        auto_refresh=False, auto_import_on_start=False,
     )
     s.data_dir.mkdir(parents=True)
     import_zip(vo_zip, s.voa_db_path, list_year=2026)

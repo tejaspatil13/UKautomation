@@ -1,0 +1,26 @@
+# Two separate environments, each with its own database and its own secrets (SIGNING_KEY, ADMIN_TOKEN):
+#   test        your Windows test PC. Short trials (TRIAL_SECONDS, default 10 minutes here).
+#   production  the client. The trial is always exactly 48 hours (fixed in src/index.js).
+# Set up: see docs/desktop/LICENSING_GUIDE.md. database_id values come from `wrangler d1 create`.
+name = "copilot-license"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[env.test]
+name = "copilot-license-test"
+vars = { ENVIRONMENT = "test", TRIAL_SECONDS = "600" }
+
+[[env.test.d1_databases]]
+binding = "DB"
+database_name = "copilot-license-test"
+database_id = "00000000-0000-0000-0000-000000000000"  # replace after `wrangler d1 create copilot-license-test`
+
+[env.production]
+name = "copilot-license"
+vars = { ENVIRONMENT = "production" }
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "copilot-license"
+database_id = "00000000-0000-0000-0000-000000000000"  # replace after `wrangler d1 create copilot-license`

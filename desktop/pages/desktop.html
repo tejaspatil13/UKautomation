@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Copilot</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --card: #ffffff; --text: #1c2430; --text-2: #5b6573; --text-3: #8a93a0;
+      --line: #e1e4e9; --accent: #2357c6; --accent-dark: #1a449e; --accent-soft: #eaf0fc;
+      --green: #1d7a46; --red: #c0392b; --red-soft: #fdecea; --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    }
+    .card {
+      width: min(560px, 100%); background: var(--card); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 28px 32px; box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .brand-mark { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+    .brand-name { font-weight: 700; font-size: 16px; }
+    h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    p { margin: 0 0 12px; color: var(--text-2); }
+    .tone-bad h1 { color: var(--red); }
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: -3px;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+    ul.data { list-style: none; padding: 0; margin: 16px 0; border-top: 1px solid var(--line); }
+    ul.data li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .ok { color: var(--green); font-weight: 500; }
+    .wait { color: var(--text-3); }
+    .busy { color: var(--accent); font-weight: 500; }
+    .err { color: var(--red); }
+    .progress { font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--text-3);
+      overflow-wrap: anywhere; min-height: 1.4em; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    button {
+      font: inherit; font-weight: 500; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--card); color: var(--text);
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover { background: var(--accent-dark); }
+    button:disabled { opacity: .55; cursor: default; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .foot { margin-top: 20px; font-size: 12px; color: var(--text-3); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main class="card" id="card" aria-live="polite">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Copilot</span></div>
+    <h1 id="title"><span class="spinner" aria-hidden="true"></span>Starting Copilot…</h1>
+    <p id="message"></p>
+    <ul class="data hidden" id="datasets"></ul>
+    <p class="progress hidden" id="progress"></p>
+    <div class="actions" id="actions"></div>
+    <p class="foot" id="foot"></p>
+  </main>
+  <script src="/desktop/desktop.js"></script>
+</body>
+</html>

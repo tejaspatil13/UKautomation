@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { api, ApiError, DataUpdate } from "./api";
 
 export const gbp = (n: number) => "£" + n.toLocaleString("en-GB");
 export const when = (iso: string) =>
@@ -85,22 +86,26 @@ export function NameDialog({ open, initial, onSave, onClose }: {
   );
 }
 
-export function DownloadDialog({ open, defaultName, summary, onDownload, onClose }: {
-  open: boolean; defaultName: string; summary: string;
-  onDownload: (filename: string) => Promise<void>; onClose: () => void;
+export function DownloadDialog({ open, defaultName, summary, rows, allowSplit = false, onDownload, onClose }: {
+  open: boolean; defaultName: string; summary: string; rows?: number; allowSplit?: boolean;
+  onDownload: (filename: string, parts: number) => Promise<void>; onClose: () => void;
 }) {
   const [name, setName] = useState(defaultName);
+  const [parts, setParts] = useState("1");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { if (open) { setName(defaultName); setError(""); setBusy(false); } }, [open, defaultName]);
+  useEffect(() => { if (open) { setName(defaultName); setParts("1"); setError(""); setBusy(false); } }, [open, defaultName]);
+
+  const n = Math.max(1, Math.min(Number.parseInt(parts, 10) || 1, 100, rows ?? 100));
+  const each = rows ? Math.ceil(rows / n) : 0;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const n = fileSafe(name.replace(/\.xlsx$/i, ""));
-    if (!n) return setError("Enter a file name.");
+    const file = fileSafe(name.replace(/\.(xlsx|zip)$/i, ""));
+    if (!file) return setError("Enter a file name.");
     setBusy(true);
     try {
-      await onDownload(n);
+      await onDownload(file, allowSplit ? n : 1);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Download failed.");
@@ -109,7 +114,7 @@ export function DownloadDialog({ open, defaultName, summary, onDownload, onClose
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="Name your Excel file">
+    <Dialog open={open} onClose={onClose} title="Download Excel">
       <form onSubmit={submit} noValidate>
         <p className="dialog-copy">{summary}</p>
         <label className="field">
@@ -117,15 +122,96 @@ export function DownloadDialog({ open, defaultName, summary, onDownload, onClose
           <span className="suffix-input">
             <input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={80}
               onFocus={(e) => e.currentTarget.select()} />
-            <span className="suffix">.xlsx</span>
+            <span className="suffix">{allowSplit && n > 1 ? ".zip" : ".xlsx"}</span>
           </span>
         </label>
+        {allowSplit && (
+          <>
+            <label className="field split-field">
+              <span className="field-label">Split into</span>
+              <span className="split-row">
+                <input type="number" min={1} max={100} value={parts} onChange={(e) => setParts(e.target.value)} />
+                <span className="muted small">{n === 1 ? "one file" : `${n} files, about ${each.toLocaleString()} rows each`}</span>
+              </span>
+            </label>
+            <div className="split-presets" role="group" aria-label="Quick split">
+              {[1, 5, 10, 15].map((k) => (
+                <button key={k} type="button" className={`btn btn-small ${n === k ? "on" : ""}`} onClick={() => setParts(String(k))}>
+                  {k === 1 ? "No split" : k}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         {error && <p className="inline-error" role="alert">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>{busy ? "Preparing…" : "Download"}</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? "Preparing…" : n > 1 && allowSplit ? `Download ${n} files` : "Download"}</button>
         </div>
       </form>
+    </Dialog>
+  );
+}
+
+export function UpdatesDialog({ open, onInstall, onClose }: {
+  open: boolean; onInstall: () => Promise<void>; onClose: () => void;
+}) {
+  const [items, setItems] = useState<DataUpdate[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setItems(null); setError(""); setBusy(false);
+    api.checkUpdates().then(setItems).catch((err) => setError(err instanceof ApiError ? err.messages[0] : "Could not check."));
+  }, [open]);
+
+  const pending = (items ?? []).filter((d) => d.update_pending && !d.updating);
+  const updating = (items ?? []).some((d) => d.updating);
+
+  async function install() {
+    setBusy(true);
+    try {
+      await onInstall();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messages[0] : "Could not start the update.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Data updates">
+      {!items && !error && <p className="dialog-copy">Checking the government site and the map data for new versions…</p>}
+      {items && (
+        <ul className="update-list">
+          {items.map((d) => (
+            <li key={d.name}>
+              <span className="update-name">{d.name}</span>
+              <span className={d.update_pending ? "update-new" : d.last_error ? "warn" : "update-ok"}>
+                {d.updating ? "Installing now…"
+                  : d.last_error ? d.last_error
+                  : d.update_pending ? (d.installed ? `New version ${d.available}` : "Not installed yet")
+                  : "Up to date"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {items && pending.length > 0 && !updating && (
+        <p className="dialog-copy">
+          Install now? The new data downloads in the background and replaces the old when it’s ready.
+          Searches keep working. On a slow connection this can take an hour or more.
+        </p>
+      )}
+      {error && <p className="inline-error" role="alert">{error}</p>}
+      <div className="dialog-actions">
+        <button type="button" className="btn btn-quiet" onClick={onClose}>{pending.length && !updating ? "Not now" : "Close"}</button>
+        {pending.length > 0 && !updating && (
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={install}>
+            {busy ? "Starting…" : `Install ${pending.length === 1 ? "update" : `${pending.length} updates`}`}
+          </button>
+        )}
+      </div>
     </Dialog>
   );
 }

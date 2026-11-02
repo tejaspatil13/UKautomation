@@ -1,15 +1,15 @@
 # Render Blueprint: one Docker web service with a persistent disk for the datasets.
 services:
   - type: web
-    name: uk-business-finder
+    name: copilot
     runtime: docker
-    plan: starter            # 512 MB RAM is enough: imports stream, searches are SQLite reads
+    plan: standard           # 2 GB RAM: the monthly Companies House import holds ~5.6M company numbers
     region: frankfurt
     healthCheckPath: /api/health
     disk:
       name: data
       mountPath: /data
-      sizeGB: 5
+      sizeGB: 20             # ~4.5 GB of data + room to build each update beside the old copy
     envVars:
       - key: UKA_DATA_DIR
         value: /data
@@ -17,3 +17,5 @@ services:
         value: "true"
       - key: UKA_APP_PASSWORD
         generateValue: true
+      - key: UKA_COMPANIES_HOUSE_API_KEY
+        sync: false            # set in the dashboard: free key from developer.company-information.service.gov.uk

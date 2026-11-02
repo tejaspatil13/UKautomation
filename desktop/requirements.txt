@@ -1,0 +1,6 @@
+# Desktop app (Windows build) = the backend's requirements + the desktop wrapper.
+-r ../backend/requirements.txt
+pywebview==6.2.1
+velopack==1.2.161
+cryptography==50.0.2
+pyinstaller==6.22.3

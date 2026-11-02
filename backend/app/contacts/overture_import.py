@@ -19,6 +19,7 @@ import duckdb
 import httpx
 
 from app.config import get_settings
+from app.dbswap import swap_in
 from app.normalize import normalize_postcode
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ def latest_release() -> str:
 def import_release(release: str, db_path) -> int:
     src = f"s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*"
     duck = duckdb.connect()
+    if ext_dir := os.environ.get("UKA_DUCKDB_EXTENSIONS"):  # desktop app: httpfs ships with the app
+        duck.execute("SET extension_directory = '%s'" % ext_dir.replace("'", "''"))
     duck.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
     # Keep the remote scan inside a small instance's RAM (DuckDB spills to disk past this).
     duck.execute(f"SET memory_limit='{os.environ.get('UKA_DUCKDB_MEMORY', '256MB')}'; SET threads=2;")
@@ -93,7 +96,7 @@ def import_release(release: str, db_path) -> int:
     con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
     con.commit()
     con.close()
-    os.replace(tmp, db_path)
+    swap_in(tmp, db_path)
     return count
 
 

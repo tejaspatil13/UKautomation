@@ -20,6 +20,7 @@ class DatasetMissingError(RuntimeError):
 class VoaRepository:
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._town_outward_cache: dict[str, list[tuple[str, int]]] = {}
 
     def _connect(self) -> sqlite3.Connection:
         if not self.db_path.exists():
@@ -72,8 +73,6 @@ class VoaRepository:
         with self._connect() as con:
             rows = con.execute("SELECT outward, COUNT(*) FROM properties WHERE outward IS NOT NULL GROUP BY outward").fetchall()
         return sorted(rows, key=lambda r: _postcode_sort_key(r[0]))
-
-    _town_outward_cache: dict[str, list[tuple[str, int]]] = {}
 
     def _town_outwards(self, town: str) -> list[tuple[str, int]]:
         if town not in self._town_outward_cache:

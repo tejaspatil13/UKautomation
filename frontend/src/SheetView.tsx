@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ApiError, SheetRecord } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, ApiError, BusinessRow, OwnerRun } from "./api";
 import { RecordsTable } from "./RecordsTable";
-import { ConfirmDialog, DownloadDialog, fileSafe, gbp, today } from "./ui";
+import { ConfirmDialog, DownloadDialog, fileSafe, today } from "./ui";
 
-export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
+export function SheetView({ employee, toast, onSheetChanged, onCustomersChanged, onGoSearch, onGoCustomers }: {
   employee: string; toast: (t: string, tone?: "good" | "bad") => void;
-  onSheetChanged: (total: number) => void; onGoSearch: () => void;
+  onSheetChanged: (total: number) => void; onCustomersChanged: () => void;
+  onGoSearch: () => void; onGoCustomers: () => void;
 }) {
-  const [rows, setRows] = useState<SheetRecord[] | null>(null);
+  const [rows, setRows] = useState<BusinessRow[] | null>(null);
+  const [run, setRun] = useState<OwnerRun | null>(null);
   const [text, setText] = useState("");
   const [desc, setDesc] = useState("");
   const [search, setSearch] = useState("");
@@ -16,10 +18,28 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
 
   const load = useCallback(() => {
     api.sheet(employee)
-      .then((d) => { setRows(d.items); onSheetChanged(d.total); })
+      .then((d) => { setRows(d.items); setRun(d.owners); onSheetChanged(d.total); })
       .catch(() => setRows([]));
   }, [employee, onSheetChanged]);
   useEffect(load, [load]);
+
+  // While the owner search runs, follow its progress; reload once it finishes.
+  const notify = useRef({ toast, onCustomersChanged });
+  notify.current = { toast, onCustomersChanged };
+  useEffect(() => {
+    if (!run?.running) return;
+    const t = setInterval(() => {
+      api.ownersStatus(employee).then((s) => {
+        setRun(s);
+        if (!s.running) {
+          load();
+          notify.current.onCustomersChanged();
+          notify.current.toast(s.message, s.found ? "good" : undefined);
+        }
+      }).catch(() => undefined);
+    }, 2000);
+    return () => clearInterval(t);
+  }, [run?.running, employee, load]);
 
   const descriptions = useMemo(() => [...new Set((rows ?? []).map((r) => r.description))].sort(), [rows]);
   const searches = useMemo(() => [...new Set((rows ?? []).map((r) => r.search))], [rows]);
@@ -30,12 +50,12 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
       (!t || `${r.business_name} ${r.business_address} ${r.address} ${r.phone} ${r.postcode}`.toLowerCase().includes(t)));
   }, [rows, text, desc, search]);
   const filtered = rows !== null && shown.length !== rows.length;
-  const totalRv = shown.reduce((a, r) => a + r.rv, 0);
+  const unchecked = shown.filter((r) => !r.owner_checked && r.business_name).length;
 
-  async function remove(uarn: string) {
+  async function remove(row: BusinessRow) {
     try {
-      const r = await api.sheetRemove(employee, [uarn]);
-      setRows((xs) => (xs ?? []).filter((x) => x.uarn !== uarn));
+      const r = await api.sheetRemove(employee, row.uarns);
+      setRows((xs) => (xs ?? []).filter((x) => x.key !== row.key));
       onSheetChanged(r.total);
     } catch (err) {
       toast(err instanceof ApiError ? err.messages[0] : "Could not remove the row.", "bad");
@@ -53,6 +73,14 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
     }
   }
 
+  async function findOwners() {
+    try {
+      setRun(await api.ownersRun(employee, filtered ? shown.flatMap((r) => r.uarns) : null));
+    } catch (err) {
+      toast(err instanceof ApiError ? err.messages[0] : "Could not start the owner search.", "bad");
+    }
+  }
+
   if (rows === null) return <p className="muted loading">Loading your sheet…</p>;
 
   return (
@@ -61,7 +89,7 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
         <div>
           <h2 className="sheet-title">My sheet</h2>
           <p className="tally">
-            <span className="mono">{rows.length.toLocaleString()}</span> properties
+            <span className="mono">{rows.length.toLocaleString()}</span> rows
             <span className="sep">/</span>
             <span className="mono">{searches.length}</span> {searches.length === 1 ? "search" : "searches"}
           </p>
@@ -71,10 +99,28 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
             <button type="button" className="btn btn-primary" onClick={() => setDownloadOpen(true)}>
               {filtered ? `Download ${shown.length} shown` : `Download all ${rows.length}`}
             </button>
+            <button type="button" className="btn" onClick={findOwners} disabled={run?.running}
+              title="Look up each business on Companies House; matches go to Potential customers">
+              Get business owner names
+            </button>
             <button type="button" className="btn btn-quiet" onClick={() => setClearOpen(true)}>Clear sheet</button>
           </div>
         )}
       </header>
+
+      {run?.running && (
+        <div className="progress">
+          <p className="progress-title">Finding owners on Companies House</p>
+          <div className="bar"><div style={{ width: `${Math.max(3, Math.round((run.done / Math.max(run.total, 1)) * 100))}%` }} /></div>
+          <p className="muted small">{run.message} · you can keep working, it runs in the background.</p>
+        </div>
+      )}
+      {!run?.running && run?.message && run.total > 0 && (
+        <p className={run.blocked ? "notice" : "notice done-notice"}>
+          {run.message}{" "}
+          {run.found > 0 && <button type="button" className="link-btn" onClick={onGoCustomers}>Open Potential customers</button>}
+        </p>
+      )}
 
       {rows.length === 0 ? (
         <div className="empty-sheet">
@@ -110,25 +156,28 @@ export function SheetView({ employee, toast, onSheetChanged, onGoSearch }: {
             )}
           </div>
           <p className="muted small shown-line">
-            Showing <span className="mono">{shown.length}</span> of <span className="mono">{rows.length}</span> · combined rateable value <span className="mono">{gbp(totalRv)}</span>
+            Showing <span className="mono">{shown.length}</span> of <span className="mono">{rows.length}</span>
+            {unchecked > 0 && <> · <span className="mono">{unchecked}</span> not checked for owners yet</>}
           </p>
-          <RecordsTable items={shown} onRemove={remove} showSearch empty="No rows match these filters." />
+          <RecordsTable items={shown} onRemove={remove} empty="No rows match these filters." />
         </>
       )}
 
       <DownloadDialog
         open={downloadOpen}
         defaultName={fileSafe(`${employee} - My sheet - ${today()}`)}
+        rows={shown.length}
+        allowSplit
         summary={filtered
           ? `${shown.length} of ${rows.length} rows (only the ones matching your filters).`
           : `All ${rows.length} rows in your sheet.`}
-        onDownload={(name) => api.sheetDownload(employee, name, filtered ? shown.map((r) => r.uarn) : null)}
+        onDownload={(name, parts) => api.sheetDownload(employee, name, filtered ? shown.flatMap((r) => r.uarns) : null, parts)}
         onClose={() => setDownloadOpen(false)}
       />
       <ConfirmDialog
         open={clearOpen}
         title="Clear your sheet?"
-        body={`All ${rows.length} rows will be removed from ${employee}’s sheet. Download it first if you need a copy.`}
+        body={`All ${rows.length} rows will be removed from ${employee}’s sheet. Download it first if you need a copy. Potential customers are kept.`}
         confirm="Clear sheet"
         onConfirm={clear}
         onClose={() => setClearOpen(false)}

@@ -1,7 +1,7 @@
 """Write results (a single search, or an employee's whole sheet) into the client's spreadsheet template."""
 import re
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -9,17 +9,30 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from app.companies.house import CompanyMatch
 from app.models import ResultRecord
 
-# A-E are the client's original columns (B = the address as the business lists it). F onwards mirror
-# the dashboard. "comments" and "Status" are left empty for the caller to fill in.
-HEADERS = (
-    ("business name", None), ("add", None), ("RV", None), ("Contact no", None), ("comments", None),
-    ("Status", 16), ("Other numbers at this address", 48), ("Note", 40), ("Description (VO)", 28),
-    ("Postcode", 10), ("Google Maps", 13), ("Gov.uk record", 14), ("VO address", 45), ("VO UARN", 14),
-    ("Search", 30), ("Added", 17),
+# A-E are the client's original columns (B = the address as the business lists it). The rest mirror
+# the dashboard. "comments" and "Status" are left empty for the caller to fill in. One row is one
+# business: when it occupies several rated entries, every RV and Gov.uk record is listed.
+BASE_COLUMNS = (
+    ("name", "business name", None), ("address", "add", None), ("rv", "RV", None),
+    ("phone", "Contact no", None), ("comments", "comments", None), ("status", "Status", 16),
 )
-COL_PHONE, COL_MAPS, COL_GOV = 4, 11, 12
+OWNER_COLUMNS = (
+    ("owner", "Owner / director", 30), ("company", "Company name", 32), ("company_number", "Company number", 15),
+    ("company_status", "Company status", 14), ("incorporated", "Incorporated", 14),
+    ("nature", "Nature of business", 40), ("owners_detail", "Owners (shareholding, since)", 50),
+    ("directors_detail", "People (role, since)", 50), ("ch_link", "Companies House", 16),
+    ("registered", "Registered office", 45),
+)
+DETAIL_COLUMNS = (
+    ("others", "Other numbers at this address", 48), ("note", "Note", 40),
+    ("description", "Description (VO)", 28), ("postcode", "Postcode", 10), ("maps", "Google Maps", 13),
+    ("gov", "Gov.uk record", 15), ("vo_address", "VO address", 45), ("uarn", "VO UARN", 14),
+    ("search", "Search", 30), ("added", "Added", 17),
+)
+LINK_KEYS = {"maps", "gov", "ch_link"}
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "\n")
 _LINK = Font(name="Calibri", size=11, color="0563C1", underline="single")
 _FILENAME_BAD = re.compile(r"[^A-Za-z0-9 ._()&'-]+")
@@ -27,9 +40,16 @@ _FILENAME_BAD = re.compile(r"[^A-Za-z0-9 ._()&'-]+")
 
 @dataclass
 class ExportRow:
-    record: ResultRecord
+    record: ResultRecord  # the business's main entry (highest RV)
     search: str = ""  # which search the row came from, e.g. "LONDON · EC1V 9LT · CO"
     added: datetime | None = None
+    properties: list[ResultRecord] = field(default_factory=list)  # every VO entry for this business
+    key: str = ""
+    company: CompanyMatch | None = None
+
+    def __post_init__(self):
+        if not self.properties:
+            self.properties = [self.record]
 
 
 def safe_cell(value):
@@ -63,18 +83,69 @@ ATTRIBUTION = (
     ("Business names & phone numbers",
      "Overture Maps Foundation places (CDLA-Permissive-2.0; includes data from OpenStreetMap contributors, "
      "Meta, Microsoft, Foursquare and others — see https://docs.overturemaps.org/attribution/)."),
-    ("Several businesses at one address",
-     "Shared buildings list several businesses at the same address. The most likely one's number is in "
-     "'Contact no'; the others are in 'Other numbers at this address'. Use the Google Maps link to check."),
+    ("Shared buildings",
+     "The business listings say which businesses are in a building, not which unit. A unit is given to a "
+     "business only when Companies House lists that company at the same unit number ('Unit confirmed' in Note). "
+     "In business centres (4+ businesses) units whose occupier is not known are left out. In buildings with 2-3 "
+     "businesses the most likely one is shown and Note says 'Shared building' - ask who is in that unit. Every "
+     "number in the building is in 'Other numbers at this address'."),
+    ("Owners / directors",
+     "Companies House register and people-with-significant-control data (Contains public sector information "
+     "licensed under the Open Government Licence v3.0). A company is included only when it is active, its name "
+     "is similar and its registered office postcode is the premises' postcode. 'Owner / director' is the company's "
+     "active officers (directors, partners, members, secretaries), never a resigned one or another company."),
     ("Before calling",
      "Unsolicited sales/marketing calls must be screened against TPS and CTPS (Privacy and Electronic "
      "Communications Regulations). This file has NOT been screened."),
 )
 
 
+def _rv_text(props: list[ResultRecord]):
+    return props[0].rv if len(props) == 1 else " / ".join(f"£{p.rv:,}" for p in props)
+
+
+def shared_note(row: ExportRow) -> str:
+    n = row.record.shared_building
+    if not n or row.record.occupier_unknown:
+        return ""  # unknown occupiers carry their own note
+    unit = row.record.number_or_name if len(row.properties) == 1 else "these units"
+    n = f"{n}" if row.record.building_businesses else f"{n} or more"
+    return (f"Shared building: {n} businesses listed here. The business name is the most likely one, "
+            f"not confirmed - ask who is in {unit}.")
+
+
+def address_for(rec: ResultRecord) -> str:
+    """The address as the business lists it; for a unit in a shared building, the unit's own address."""
+    if rec.unit_company or rec.shared_building:
+        return rec.address
+    return rec.business_address or rec.address
+
+
+def _values(row: ExportRow) -> dict:
+    rec, props, co = row.record, row.properties, row.company
+    added = row.added or rec.collected_at
+    values = {
+        "name": rec.business_name or ("Occupier not known" if rec.occupier_unknown else ""), "address": address_for(rec), "rv": _rv_text(props),
+        "phone": rec.phone, "comments": "", "status": "",
+        "others": "; ".join(rec.other_numbers), "note": "; ".join(p for p in (shared_note(row) or rec.match_note, rec.phone_label) if p),
+        "description": "; ".join(dict.fromkeys(p.description for p in props)), "postcode": rec.postcode,
+        "maps": "Open map", "gov": "Open record" if len(props) == 1 else f"£{props[0].rv:,} record",
+        "vo_address": "; ".join(p.address for p in props), "uarn": ", ".join(p.uarn for p in props),
+        "search": row.search, "added": added.strftime("%Y-%m-%d %H:%M") if added else "",
+    }
+    if co:
+        values |= {"owner": co.owner_names, "company": co.company_name, "company_number": co.company_number,
+                   "company_status": co.status, "incorporated": co.incorporated,
+                   "nature": "; ".join(co.nature_of_business),
+                   "owners_detail": "\n".join(p.summary for p in co.owners),
+                   "directors_detail": "\n".join(p.summary for p in co.directors),
+                   "ch_link": "Open company", "registered": co.registered_address}
+    return values
+
+
 def write_workbook(
     template: Path, out_path: Path, rows: list[ExportRow], rv_header: str,
-    about: list[tuple[str, str]] | None = None,
+    about: list[tuple[str, str]] | None = None, owners: bool = False,
 ) -> None:
     wb = openpyxl.load_workbook(template)
     ws = wb.active
@@ -88,33 +159,39 @@ def write_workbook(
     for idx in [i for i in ws.row_dimensions if i > 1]:
         del ws.row_dimensions[idx]
 
-    for i, (title, width) in enumerate(HEADERS, start=1):
-        cell = ws.cell(row=1, column=i, value=rv_header if i == 3 else title)
+    columns = list(BASE_COLUMNS + (OWNER_COLUMNS if owners else ()) + DETAIL_COLUMNS)
+    # Businesses with several rated entries get one extra Gov.uk link column per further entry.
+    extra_records = max((len(r.properties) for r in rows), default=1) - 1
+    columns += [(f"gov{n}", f"Gov.uk record {n}", 15) for n in range(2, extra_records + 2)]
+    col_of = {key: i for i, (key, _, _) in enumerate(columns, start=1)}
+
+    for i, (key, title, width) in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=i, value=rv_header if key == "rv" else title)
         if i > 5:
             cell._style = copy(header_style)
             ws.column_dimensions[get_column_letter(i)].width = width
 
     for r, row in enumerate(rows, start=2):
-        rec = row.record
-        added = row.added or rec.collected_at
-        values = (
-            rec.business_name, rec.business_address or rec.address, rec.rv, rec.phone, "",
-            "", "; ".join(rec.other_numbers), rec.match_note, rec.description, rec.postcode,
-            "Open map", "Open record", rec.address, rec.uarn, row.search,
-            added.strftime("%Y-%m-%d %H:%M") if added else "",
-        )
-        for c, value in enumerate(values, start=1):
+        values = _values(row)
+        for key, c in col_of.items():
+            value = values.get(key, "")
             value = "" if value is None else value
             # The phone is our own validated "+44 ..." string, never a formula; keep the "+" visible.
-            cell = ws.cell(row=r, column=c, value=value if c == COL_PHONE else safe_cell(value))
+            cell = ws.cell(row=r, column=c, value=value if key == "phone" else safe_cell(value))
             if c <= 5:
                 cell._style = copy(style_row[c - 1])
-        ws.cell(row=r, column=COL_PHONE).number_format = "@"
-        for col, url in ((COL_MAPS, rec.google_maps_url), (COL_GOV, rec.source_url)):
-            link = ws.cell(row=r, column=col)
+        ws.cell(row=r, column=col_of["phone"]).number_format = "@"
+        links = {"maps": row.record.google_maps_url, "gov": row.properties[0].source_url}
+        links |= {f"gov{n}": p.source_url for n, p in enumerate(row.properties[1:], start=2)}
+        if row.company and owners:
+            links["ch_link"] = row.company.url
+        for n, p in enumerate(row.properties[1:], start=2):
+            ws.cell(row=r, column=col_of[f"gov{n}"], value=f"£{p.rv:,} record")
+        for key, url in links.items():
+            link = ws.cell(row=r, column=col_of[key])
             link.hyperlink, link.font = url, _LINK
 
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(HEADERS))}{max(len(rows) + 1, 2)}"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(len(rows) + 1, 2)}"
     ws.freeze_panes = "A2"
 
     if about:

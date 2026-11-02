@@ -34,17 +34,24 @@ class SheetStore:
         return con
 
     def add(self, employee: str, records: list[ResultRecord], search: str) -> tuple[int, int]:
-        """Add records (one row per property). Returns (added, already_in_sheet)."""
+        """Add records (one row per property). Returns (added, already_in_sheet).
+
+        A property that is already in the sheet is refreshed with the newer result (e.g. after a better
+        match), keeping when it was first added.
+        """
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         key = employee_key(employee)
         added = 0
         with self._db() as con:
             for rec in records:
-                cur = con.execute(
-                    "INSERT OR IGNORE INTO sheet_rows VALUES (?, ?, ?, ?, ?)",
+                exists = con.execute("SELECT 1 FROM sheet_rows WHERE employee_key = ? AND uarn = ?",
+                                     (key, rec.uarn)).fetchone()
+                con.execute(
+                    "INSERT INTO sheet_rows VALUES (?, ?, ?, ?, ?) ON CONFLICT(employee_key, uarn) "
+                    "DO UPDATE SET record_json = excluded.record_json, search = excluded.search",
                     (key, rec.uarn, rec.model_dump_json(), search, now),
                 )
-                added += cur.rowcount
+                added += not exists
         return added, len(records) - added
 
     def rows(self, employee: str) -> list[ExportRow]:
@@ -57,6 +64,12 @@ class SheetStore:
         return [
             ExportRow(ResultRecord.model_validate_json(r[0]), r[1], datetime.fromisoformat(r[2])) for r in found
         ]
+
+    def update(self, employee: str, records: list[ResultRecord]) -> None:
+        """Save re-matched results for rows already in the sheet."""
+        with self._db() as con:
+            con.executemany("UPDATE sheet_rows SET record_json = ? WHERE employee_key = ? AND uarn = ?",
+                            [(r.model_dump_json(), employee_key(employee), r.uarn) for r in records])
 
     def remove(self, employee: str, uarns: list[str]) -> int:
         with self._db() as con:

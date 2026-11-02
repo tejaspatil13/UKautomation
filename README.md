@@ -26,6 +26,8 @@ Dashboard ──▶ FastAPI ──▶ in-process job runner
 |---|---|---|---|
 | Premises, address, rateable value | [VO compiled rating list](https://voaratinglists.blob.core.windows.net/html/rlidata.htm) (2026 list) | Official bulk download, imported into SQLite. No scraping of the "Find a property" site. | Free |
 | Business name, phone | [Overture Maps places](https://docs.overturemaps.org/) (aggregates Meta, Microsoft, Foursquare, OSM and others) | Bulk GeoParquet, England & Wales extract imported into SQLite | Free |
+| Registered company, owners | [Companies House bulk data](https://download.companieshouse.gov.uk/): Basic Company Data (monthly) + People with significant control snapshot | Downloaded part by part and imported into SQLite; matching needs no web requests | Free (OGL v3) |
+| Directors / partners (active officers) | [Companies House](https://find-and-update.company-information.service.gov.uk/) | One request per *matched* company, remembered 30 days. Official API when `UKA_COMPANIES_HOUSE_API_KEY` is set, otherwise the public officers page | Free |
 
 Why not scrape the VO site? It has no API. Results come 15 per page, pagination depends on the session, and the list
 doesn't show RV, so one area search means hundreds of requests. The bulk file holds the same data
@@ -47,6 +49,7 @@ cd frontend && npm ci && npm run build && cd ..
 cd backend
 ../.venv/bin/python -m app.voa.importer              # ~95 MB download, ~5 min import, 2.1M premises
 ../.venv/bin/python -m app.contacts.overture_import  # England & Wales places; time depends on bandwidth
+../.venv/bin/python -m app.companies.bulk_import     # Companies House register + owners (~3 GB download, part by part)
 ../.venv/bin/uvicorn app.main:app --port 8000        # open http://localhost:8000
 ```
 
@@ -68,6 +71,38 @@ Click **Start search**. The results table shows every listed property and why ea
 **Removed properties:** the data is the VO's *current* rating list, which contains only properties that are listed
 with a valuation. Properties the site shows as "removed from the rating list on …" aren't in it, so they're skipped automatically.
 
+**One row per business.** A business that occupies several rated entries is shown once, with every rateable value
+listed and a Gov.uk record link for each.
+
+**Business centres (4+ businesses in one building).** The business listings say who is in a building, never which
+unit, so a rateable value is only given to a business when the unit is confirmed:
+- **Unit confirmed:** Companies House has a company registered at the same unit number (the rating list writes
+  "Unit 3.08", Companies House "Unit 308"). That company gets the unit, tagged **Unit confirmed · Companies House**,
+  with its own phone when the listings have it (otherwise the building's number).
+- **Occupier not known:** every other unit is left out of the results and the Excel file: there is no business
+  name to call, and its rateable value is never credited to a guessed business. (The job message says how many
+  units were left out.)
+
+Buildings with two or three businesses keep the best guess, tagged **Shared building**. Re-running a search and
+adding it to My sheet again refreshes rows that are already there.
+
+**My sheet** collects businesses from many searches. **Download** asks for a file name and, optionally, how many
+files to split it into (e.g. 10 or 15, one per caller); the rows are shared out evenly and you get a .zip.
+
+**Get business owner names** (on My sheet) matches each business against the local copy of the Companies House
+register. A company counts only when it is active, its name is similar, and its **registered office postcode is the
+same** as the property's (or the business's own listed postcode). For each match the active officers (directors,
+partners, members, secretaries; never resigned ones) are fetched once and remembered for 30 days; their names are
+the "Owner / director". Owners with their shareholding come from the register. Matches go to **Potential customers**.
+Many companies register at their accountant's address, so expect a minority to match (about 1 in 10 in a Coventry
+test; fewer in central London).
+
+Before the bulk data is imported, the app falls back to searching the Companies House website for every business.
+Companies House blocks that after a few hundred requests, which is why the bulk data is used.
+
+**Check for updates** (footer) checks all three data sources straight away and, if anything is newer, asks before
+installing it.
+
 If some lookups failed (a provider outage, for example), the job finishes as **completed with partial results**. The file can
 still be downloaded, and **Retry failed parts** re-runs only the failed lookups.
 
@@ -79,14 +114,15 @@ Based on Sheet1 of the client's workbook (`templates/output_template.xlsx`, gene
 | Col | Header | Content |
 |---|---|---|
 | A | business name | The business found at the property |
-| B | add | The address **as the business lists it** (e.g. `380 Old Street, London, EC1V 9LT`); the VO address if no business was found |
-| C | RV (2026 list) | VO rateable value in £, the same figure the original sheet held (it held 2023-list values) |
-| D | Contact no | With country code, as text: `+44 20 7739 0399`. Every row has one |
-| E | comments | Left empty for the caller |
-| F | Other numbers at this address | Other businesses in the same building, "Name: +44 …" |
-| G | Google Maps | Link: opens Google Maps searching for the business name + its listed address |
-| H | Gov.uk record | Link: the property's page on the VO Find-a-property site |
-| I–O | VO address, Description, Postcode, VO UARN, Note, Phone source, Collected at | For checking the row |
+| B | add | The address **as the business lists it**; the VO address if no business was found |
+| C | RV (2026 list) | Rateable value in £; several values (`£37,750 / £18,500`) when the business has several entries |
+| D | Contact no | With country code, as text: `+44 20 7739 0399` |
+| E, F | comments, Status | Left empty for the caller |
+| G–P | Other numbers, Note, Description, Postcode, Google Maps, Gov.uk record, VO address, VO UARN, Search, Added | For checking the row |
+| Q… | Gov.uk record 2, 3, … | One link per further rated entry of the same business |
+
+The Potential customers file adds **Owner / director, Company name, Company number, Companies House (link) and
+Registered office** after Status.
 
 A second sheet, **About**, records the search criteria, counts, data sources, licence/attribution and the meaning of each status.
 Cells that came from external data and start with `= + - @` are prefixed with `'` (formula-injection protection).
@@ -140,6 +176,12 @@ at the same number (shop downstairs, offices upstairs) that the rules won't gues
 
 ## Deployment
 
+**Windows desktop app.** The same application also ships as installable Windows software, with
+the datasets on the client's own PC, a 2-day trial with remote activation, and automatic updates
+from GitHub Releases. See [docs/desktop/DEVELOPER_GUIDE.md](docs/desktop/DEVELOPER_GUIDE.md) (build, develop, release),
+[docs/desktop/LICENSING_GUIDE.md](docs/desktop/LICENSING_GUIDE.md), and for the client the
+[installation](docs/desktop/WINDOWS_INSTALLATION_GUIDE.md) and [user](docs/desktop/CLIENT_USER_GUIDE.md) guides.
+
 The app is a single Docker container that needs a **persistent disk** (≈2–3 GB: VO ≈ 0.7 GB + places + exports).
 Serverless platforms (Vercel, Lambda) are **not suitable**: their filesystems are read-only or ephemeral, and both the datasets and the jobs need to persist.
 
@@ -152,8 +194,29 @@ Serverless platforms (Vercel, Lambda) are **not suitable**: their filesystems ar
 **Any VPS / Fly.io / Railway**: `docker build -t uk-business-finder . && docker run -p 8000:8000 -v ukdata:/data --env-file .env uk-business-finder`.
 Put HTTPS in front (Render/Fly do this automatically; on a VPS use Caddy or nginx with Let's Encrypt).
 
-Data refresh is in-process: every 6 h the app checks dataset age and re-imports in a subprocess when it is older than
-`UKA_REFRESH_*_DAYS`. It builds a new file and atomically swaps it in, so searches keep working throughout.
+### Keeping the data up to date (automatic)
+
+Once a day the app asks each source whether something new has been published. This is a small request; nothing
+big is downloaded unless there is an update:
+- **Government rating list:** the VO download page is checked for a newer file (new epoch number), and the file's
+  server ETag is compared, so a republished file with the same name is also noticed.
+- **Business listings:** Overture's list of releases is checked for a release newer than the one installed.
+- **Companies House data:** the Basic Company Data release date (monthly); the owners snapshot is refreshed with it.
+
+New data is downloaded and installed only between **01:00 and 05:00** (`UKA_REFRESH_WINDOW`), in a separate process.
+The new data file is built alongside the old one and swapped in at the end, so searches keep working throughout.
+If the internet is down or a download fails, the current data stays in place and the check runs again the next day.
+The dashboard footer shows each dataset's version and when it was last checked.
+
+The **Check for updates** button in the dashboard footer does the same check on demand and asks before installing.
+Before installing, the app checks there is enough free disk space and refuses (keeping the current data) if not.
+
+The server must be running at night for the automatic update to happen. To check or update by hand:
+```bash
+cd backend
+../.venv/bin/python -m app.refresh --check   # what's installed vs what's published
+../.venv/bin/python -m app.refresh --now     # install anything newer, right now
+```
 
 ### Costs
 
@@ -163,7 +226,7 @@ Data refresh is in-process: every 6 h the app checks dataset age and re-imports 
 | Render Starter + 5 GB disk | ~$7 + ~$1.25 per month |
 | Optional Google Places (not enabled) | ~$20–35 per 1,000 lookups after the monthly free allowance, plus terms restrictions |
 
-No API keys are needed in the default configuration.
+No API keys are needed in the default configuration. A free Companies House API key is optional.
 
 ## Configuration
 
