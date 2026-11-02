@@ -13,7 +13,8 @@ import threading
 import time
 
 log = logging.getLogger(__name__)
-CHECK_EVERY_S = 4 * 3600  # GitHub allows 60 unauthenticated API calls per hour per IP
+# GitHub allows 60 unauthenticated API calls per hour per IP. Test builds check often so fixes arrive quickly.
+CHECK_EVERY_S = {"stable": 4 * 3600, "test": 15 * 60}
 
 
 def run_hooks() -> None:
@@ -35,6 +36,7 @@ class Updater:
         self._pending = None
         self._um = None
         self._stop = threading.Event()
+        self._every = CHECK_EVERY_S.get(channel, 4 * 3600)
         if not repo or channel == "dev":
             return
         try:
@@ -79,12 +81,12 @@ class Updater:
             pass
 
     def run(self) -> None:
-        """Background thread: check at start, then every 4 hours."""
+        """Background thread: check at start, then every 15 minutes (test) or 4 hours (stable)."""
         while self.enabled and not self._stop.is_set():
             self.check_and_download()
             if self.status == "ready":
                 return
-            self._stop.wait(CHECK_EVERY_S)
+            self._stop.wait(self._every)
 
     def stop(self) -> None:
         self._stop.set()

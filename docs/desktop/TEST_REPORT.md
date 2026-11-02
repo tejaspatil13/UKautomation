@@ -124,7 +124,7 @@ Windows failures found by the first CI run, all fixed:
 
 | # | Check | Result |
 |---|---|---|
-| U1 | Push a small change → new test pre-release → installed test build shows the update notice within 4 h (or at the next start) | not run |
+| U1 | Push a small change → new test pre-release → installed test build shows the update notice within 15 min (or at the next start) | not run |
 | U2 | **Restart now** during a search is refused with a message; after the search, it installs and reopens | not run |
 | U3 | **Later**, then close Copilot → the update installs; the next start shows the new version | not run |
 | U4 | After the update: datasets, sheets, saved name and licence all intact; no data re-download | not run |

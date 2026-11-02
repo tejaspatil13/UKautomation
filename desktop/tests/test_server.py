@@ -47,8 +47,8 @@ def make(tmp_path):
 
 def login(client, state):
     r = client.get(f"/desktop/start?token={state.session_token}", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/desktop/"
-    assert "httponly" in r.headers["set-cookie"].lower() and "samesite=strict" in r.headers["set-cookie"].lower()
+    assert r.status_code == 200 and 'url=/desktop/"' in r.text  # a page, so the cookie is stored first
+    assert "httponly" in r.headers["set-cookie"].lower() and "samesite=lax" in r.headers["set-cookie"].lower()
 
 
 def test_only_the_window_with_the_session_cookie_gets_in(make):

@@ -24,7 +24,7 @@ Copilot.exe (PyInstaller, one folder)
 | `desktop/launcher.py` | Entry point. Also runs `Copilot.exe --run-import <module>`, which replaces `python -m`. |
 | `desktop/server.py` | The wrapper around `app.main.app`, plus uvicorn in a background thread |
 | `desktop/license.py` | Licence client: token checks, offline rules, background re-checks |
-| `desktop/updater.py` | Velopack: check every 4 h, download in the background, install on restart or exit |
+| `desktop/updater.py` | Velopack: check every 4 h (test builds: 15 min), download in the background, install on restart or exit |
 | `desktop/config.py` | Build channel (dev/test/stable), file locations, backend settings |
 | `desktop/pages/` | Start-up/first-run/licence screen (`desktop.html` + `.js`) and the update notice (`banner.js`) |
 | `desktop/selftest.py` | `Copilot.exe --self-test`: checks the packaged app (run by CI on Windows) |

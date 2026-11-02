@@ -38,6 +38,8 @@ PAGE_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", 
 DASHBOARD_HEADERS = PAGE_HEADERS | {
     "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
     "Cache-Control": "no-store"}
+START_PAGE = ('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/desktop/">'
+              '<title>Copilot</title><p style="font-family:system-ui">Starting Copilot…</p>')
 BANNER_TAG = '<script src="/desktop/banner.js" defer></script>'
 
 
@@ -81,12 +83,16 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
         if path == "/desktop/start":
             if not secrets.compare_digest(request.query_params.get("token", ""), state.session_token):
                 return Response("Forbidden", status_code=403)
-            resp = RedirectResponse("/desktop/", status_code=303)
-            resp.set_cookie(COOKIE, state.session_token, httponly=True, samesite="strict", path="/")
+            # A normal page, not a redirect: WebView2 must store the cookie before the next request.
+            # Lax, not Strict: Strict can be withheld on the window's first, app-initiated navigation.
+            resp = HTMLResponse(START_PAGE, headers=PAGE_HEADERS | {"Cache-Control": "no-store"})
+            resp.set_cookie(COOKIE, state.session_token, httponly=True, samesite="lax", path="/")
             return resp
         if path == "/desktop/focus":
             return await call_next(request)  # authorised by the instance secret instead
         if not secrets.compare_digest(request.cookies.get(COOKIE, ""), state.session_token):
+            log.warning("refused %s %s: session cookie %s", request.method, path,
+                        "wrong" if COOKIE in request.cookies else "missing")
             return Response("Open Copilot from the Start menu or the desktop shortcut.", status_code=403)
         if not state.license.state.allowed:
             if request.method == "POST" and PROCESSING.match(path):
