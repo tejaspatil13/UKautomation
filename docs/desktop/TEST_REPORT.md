@@ -78,7 +78,7 @@ Fill in this table as each item is done. **All must pass before the client relea
 | C7 | Second launch brings the open window to the front and exits | **passed** |
 | C8 | Uninstall removes the program and keeps `%LOCALAPPDATA%\Copilot` | **passed** |
 | C9 | Installed app activates against the real **test** licence server | **passed** (`licence state: active`, build test.8) |
-| C10 | The previous test release, installed, downloads the new one by itself and installs it when closed | see the next build |
+| C10 | The previous test release, installed, downloads the new one by itself and installs it when closed | **passed** ([run](https://github.com/tejaspatil13/UKautomation/actions/runs/41424022383)): test.8 found test.9 at start-up, downloaded it, installed it on close; afterwards the installed version was 1.0.0-test.9. Runs on every test build from now on |
 
 Windows failures found by CI, all fixed:
 
