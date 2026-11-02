@@ -46,7 +46,8 @@ Your data, sheets and settings are always kept.
 ## Trial and activation
 
 Your trial lasts **2 days** from the first time Copilot starts. When it ends, Copilot shows a
-**"Your free trial has ended"** screen and new searches stop. Nothing is deleted: your data, sheets
+**"Your subscription has been completed"** screen asking you to contact Tejas Patil on
+7709288629, and new searches stop. Nothing is deleted: your data, sheets
 and downloaded files are all kept.
 
 Once Copilot is activated, choose **Check again** on that screen, or simply reopen Copilot. It
@@ -61,11 +62,11 @@ Other messages you might see:
 | Copilot needs to check its licence | Copilot has been offline too long. Connect, then choose **Check again**. |
 | The licence server isn't responding | Usually temporary. Choose **Check again** in a few minutes. |
 | Check your computer's date and time | Correct the clock in Windows settings, then choose **Check again**. |
-| Access has been turned off | Contact your Copilot administrator. |
+| Access has been turned off | Contact Tejas Patil on 7709288629. |
 
 ## If something goes wrong
 
 Choose **Save diagnostics** on any Copilot message screen. This saves Copilot's log files as one
-.zip file. Send it to your Copilot administrator. The logs contain no passwords or keys.
+.zip file. Send it to Tejas Patil (7709288629). The logs contain no passwords or keys.
 
 If Copilot doesn't open at all, send the files in `C:\Users\<you>\AppData\Local\Copilot\logs` instead.
