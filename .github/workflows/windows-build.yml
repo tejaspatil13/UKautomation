@@ -171,10 +171,16 @@ jobs:
           Start-Sleep 2
 
           $log = "$env:LOCALAPPDATA\Copilot\logs\copilot.log"
+          function Read-Log {  # the app keeps the log open: read with sharing, as Notepad does
+            try {
+              $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite, Delete')
+              try { (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+            } catch { "" }
+          }
           $app = Start-Process $exe -PassThru
           $deadline = (Get-Date).AddSeconds(120)
           while ((Get-Date) -lt $deadline -and -not $app.HasExited -and
-                 -not (Select-String -Path $log -Pattern "window connected" -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep 2 }
+                 (Read-Log) -notmatch "window connected") { Start-Sleep 2 }
           Start-Sleep 10  # let the page render before the screenshot
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -188,10 +194,9 @@ jobs:
           $alive = -not $app.HasExited
           Get-Process Copilot -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep 2
-          Copy-Item $log window-test\ -ErrorAction SilentlyContinue
-          Get-Content $log -ErrorAction SilentlyContinue
-
-          $text = Get-Content $log -Raw -ErrorAction SilentlyContinue
+          $text = Read-Log
+          Set-Content window-test\copilot.log $text
+          $text
           $fail = @()
           if (-not $alive) { $fail += "the app closed by itself" }
           if ($text -notmatch "window connected") { $fail += "the window never got past the session check" }
