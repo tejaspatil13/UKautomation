@@ -141,13 +141,13 @@ function CustomersTable({ items, onRemove }: { items: BusinessRow[]; onRemove: (
       <table className="records customers">
         <thead>
           <tr>
-            <th>Business</th>
-            <th>Owner / people</th>
-            <th>Company</th>
-            <th>Phone</th>
+            <th className="col-cbiz">Business</th>
+            <th className="col-people">Owner / people</th>
+            <th className="col-company">Company</th>
+            <th className="col-phone">Phone</th>
             <th>Address</th>
-            <th className="num">Rateable value</th>
-            <th><span className="sr-only">Remove</span></th>
+            <th className="num col-rv">Rateable value</th>
+            <th className="col-remove"><span className="sr-only">Remove</span></th>
           </tr>
         </thead>
         <tbody>

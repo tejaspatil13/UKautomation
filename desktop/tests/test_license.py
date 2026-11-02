@@ -89,7 +89,8 @@ def test_states():
 def test_expired_trial_message_is_clear_and_keeps_data():
     p = json.loads(base64.urlsafe_b64decode(token().split(".")[0] + "=="))
     st = evaluate(p, T0 + 49 * 3600)
-    assert st.title == "Your free trial has ended" and "data" in st.message and not st.allowed
+    assert st.title == "Your subscription has been completed" and "data" in st.message and not st.allowed
+    assert "Tejas Patil, on 7709288629" in st.message
 
 
 # ---------- client: online, offline, clock ----------

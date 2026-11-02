@@ -84,3 +84,36 @@ def test_progress_is_silent_without_a_progress_file(monkeypatch, tmp_path):
     progress.report("Downloading", 1, 2, "bytes", force=True)  # command-line import: nothing to write
     monkeypatch.setenv("UKA_PROGRESS_FILE", str(tmp_path / "missing-dir" / "x.json"))
     progress.report("Downloading", 1, 2, "bytes", force=True)  # never raises
+
+
+def test_leftovers_of_an_interrupted_download_are_cleared_at_start(tmp_path):
+    """Closing the app during a download left files that looked like an import still running, so the
+    next start refused to download ("Another data update is already running") for an hour."""
+    from app import refresh
+
+    ds = Dataset("Companies House data", "app.companies.bulk_import", tmp_path / "companies.sqlite",
+                 lambda m: "", lambda s: "")
+    for f in ds.work_files():
+        f.write_bytes(b"half")
+    ds.progress_file.write_text("{}")
+    refresh.install_ready_at_startup([ds])
+    assert not any(f.exists() for f in [*ds.work_files(), ds.progress_file])
+
+
+async def test_one_datasets_download_does_not_block_another(tmp_path, monkeypatch):
+    from app import refresh
+
+    companies = Dataset("Companies House data", "app.companies.bulk_import", tmp_path / "companies.sqlite",
+                        lambda m: "", lambda s: "")
+    voa = Dataset("Government rating list", "app.voa.importer", tmp_path / "voa.sqlite", lambda m: "", lambda s: "")
+    companies.work_files()[1].write_bytes(b"part")  # Companies House is downloading
+    ran = []
+
+    async def fake_import(module, log_file=None, progress_file=None):
+        ran.append(module)
+        return True
+
+    monkeypatch.setattr(refresh, "run_import", fake_import)
+    monkeypatch.setattr(refresh, "free_gb", lambda p: 100.0)
+    assert await refresh.update(voa) and ran == ["app.voa.importer"] and not voa.last_error
+    assert not await refresh.update(companies) and "already running" in companies.last_error

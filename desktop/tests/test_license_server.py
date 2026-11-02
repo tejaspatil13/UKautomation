@@ -59,7 +59,7 @@ def test_short_trial_really_expires(tmp_path, machine):
     admin(machine, action="trial_minutes", minutes=0.05)  # 3 seconds
     time.sleep(3.5)
     st = c.check_online()
-    assert st.kind == "expired" and st.title == "Your free trial has ended"
+    assert st.kind == "expired" and st.title == "Your subscription has been completed"
 
 
 def test_expire_extend_revoke_paid(tmp_path, machine):

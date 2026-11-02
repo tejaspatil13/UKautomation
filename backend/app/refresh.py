@@ -87,6 +87,13 @@ class Dataset:
     extra: dict = field(default_factory=dict)
     _progress: dict | None = None  # last progress read, kept if one read fails mid-write
 
+    def work_files(self) -> list[Path]:
+        """Files this dataset's import writes while it runs (deleted when it finishes)."""
+        files = [self.db_path.with_suffix(".importing")]
+        if self.module == "app.companies.bulk_import":
+            files.append(self.db_path.with_name("companies-part.zip.download"))
+        return files
+
     @property
     def progress_file(self) -> Path:
         return self.db_path.with_name(self.db_path.stem + ".progress.json")
@@ -219,8 +226,14 @@ async def install_ready(ds: Dataset, release: Callable[[], None] | None = None, 
 
 
 def install_ready_at_startup(state: list[Dataset]) -> None:
-    """Before anything opens the datasets: install files a previous run finished but could not swap in."""
+    """Before anything opens the datasets: install files a previous run finished but could not swap in,
+    and clear what an import cut short by closing the app left behind (no import runs before start-up;
+    the leftovers would otherwise look like an import still running and block the download)."""
     for ds in state:
+        for f in [*ds.work_files(), ds.progress_file]:
+            if f.exists():
+                f.unlink(missing_ok=True)
+                log.info("%s: removed %s left by an interrupted download", ds.name, f.name)
         ready = dbswap.ready_path(ds.db_path)
         if ready.exists() and dbswap.replace(ready, ds.db_path, attempts=3):
             log.info("%s: installed the data downloaded last time", ds.name)
@@ -230,9 +243,8 @@ async def update(ds: Dataset, on_updated: Callable[[], None] | None = None,
                  release: Callable[[], None] | None = None) -> bool:
     if ds.updating:
         return False
-    # Work files of an import started from the command line (or still running from before a restart).
-    work = [ds.db_path.with_suffix(".importing"), *ds.db_path.parent.glob("*.download")]
-    if any(f.exists() and time.time() - f.stat().st_mtime < 900 for f in work):
+    # Work files of an import started from the command line, still being written.
+    if any(f.exists() and time.time() - f.stat().st_mtime < 900 for f in ds.work_files()):
         ds.last_error = "Another data update is already running; try again when it has finished."
         return False
     free = free_gb(ds.db_path.parent)
@@ -282,10 +294,11 @@ async def refresh_loop(settings: Settings, state: list[Dataset], callbacks: dict
             if ds.needs_update() and ((missing and settings.auto_import_on_start) or
                                       (not missing and in_window(settings.refresh_window))):
                 await update(ds, callbacks.get(ds.module), (releases or {}).get(ds.module))
-        # Re-check every hour during the night window so a pending update starts promptly,
-        # otherwise once per check interval.
+        # Missing data (first download failed or was cut short): try again in 10 minutes. A pending
+        # update: re-check hourly so it starts promptly in the night window. Otherwise once per interval.
+        missing = settings.auto_import_on_start and any(not d.installed_version for d in state)
         pending = any(d.needs_update() for d in state)
-        await asyncio.sleep(3600 if pending else settings.refresh_check_hours * 3600)
+        await asyncio.sleep(600 if missing else 3600 if pending else settings.refresh_check_hours * 3600)
 
 
 def main() -> None:

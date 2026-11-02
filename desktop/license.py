@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 CHECK_EVERY_S = {"stable": 30 * 60, "test": 60}  # test builds: admin changes show within a minute
 CLOCK_SLACK_S = 10 * 60  # small differences between this PC's clock and the server's are normal
-CONTACT = "Please contact your Copilot administrator."
+CONTACT = "Please contact the developer, Tejas Patil, on 7709288629."
 
 
 @dataclass
@@ -82,12 +82,9 @@ def evaluate(payload: dict, now: float) -> LicenseState:
         return LicenseState("revoked", plan, expires, "Access has been turned off",
                             f"This copy of Copilot is no longer licensed. {CONTACT}")
     if status == "expired" or (expires is not None and now >= expires):
-        if plan == "paid":
-            return LicenseState("expired", plan, expires, "Your licence has ended",
-                                f"Your Copilot licence has ended. {CONTACT}")
-        return LicenseState("expired", plan, expires, "Your free trial has ended",
-                            "Thank you for trying Copilot. Your 2-day trial is over. To keep using Copilot, "
-                            f"it needs to be activated. {CONTACT} Your data and saved sheets are kept.")
+        # Trial or paid period over: the same message, so the user knows whom to call.
+        return LicenseState("expired", plan, expires, "Your subscription has been completed",
+                            f"{CONTACT} Thank you. Your data and saved sheets are kept.")
     if now > payload["offline_until"]:
         return LicenseState("offline", plan, expires, "Copilot needs to check its licence",
                             "Copilot couldn't reach the licence server for too long. Connect this computer to "

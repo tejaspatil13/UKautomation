@@ -146,18 +146,24 @@ button, input, select { font: inherit; color: inherit; }
 .segmented button[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(28, 36, 48, 0.12); }
 
 /* ---------- records table ---------- */
-.table-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: auto; }
-.records { width: 100%; border-collapse: collapse; font-size: 14px; }
+/* Tables always fit the window: fixed column widths, long text wraps inside its column (no sideways scrolling). */
+.table-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow-x: hidden; }
+.records { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+.records th.col-biz { width: 27%; }
+.records th.col-phone { width: 150px; }
+.records th.col-rv { width: 150px; }
+.records th.col-remove { width: 44px; }
+.records th.col-cbiz { width: 16%; }
+.records th.col-people { width: 18%; }
+.records th.col-company { width: 16%; }
 .records th {
   position: sticky; top: 0; z-index: 1; background: #fafbfc; text-align: left; padding: 10px 14px;
   font-weight: 500; font-size: 13px; color: var(--text-2); border-bottom: 1px solid var(--line); white-space: nowrap;
 }
-.records td { padding: 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.records td { padding: 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; overflow-wrap: anywhere; }
 .records tbody tr:last-child td { border-bottom: 0; }
 .records tbody tr:hover td { background: #fbfcfd; }
 .records .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.records td[data-label="Business"] { min-width: 170px; }
-.records td[data-label="Address"] { min-width: 280px; }
 .biz { font-weight: 600; }
 .sub { color: var(--text-3); font-size: 13px; margin-top: 2px; }
 .sub.from { color: var(--accent); }
@@ -178,18 +184,18 @@ button, input, select { font: inherit; color: inherit; }
 .rv-value { font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
 .rvs .sub { margin-top: 4px; }
 .records td[data-label="Rateable value"] { width: 150px; }
-.gov-links { display: block; max-width: 150px; text-align: right; line-height: 1.6; }
+.gov-links { display: block; max-width: 150px; text-align: right; line-height: 1.6; white-space: normal; }
+.rv-more { font-size: 13px; margin-top: 2px; }
 .gov-links a { margin-left: 6px; color: var(--accent); font-weight: 500; }
 .shared-tag { display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: #fff3dc; color: #8a5300; font-size: 12px; font-weight: 500; }
 .sub.unit { color: #8a5300; }
 .unit-tag { display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 500; }
-.people { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 200px; }
+.people { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .person { font-weight: 600; display: block; }
 .person-detail { margin-top: 0; }
 .people-label { font-size: 12px; color: var(--text-3); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .company-name { font-weight: 600; text-decoration: none; }
 .company-name:hover { text-decoration: underline; }
-.customers td[data-label="Company"] { min-width: 230px; max-width: 300px; }
 
 .records a.sub { display: inline-block; margin-top: 4px; color: var(--accent); }
 .remove-cell { width: 44px; text-align: center; }
@@ -202,8 +208,7 @@ button, input, select { font: inherit; color: inherit; }
   .records td { border: 0; padding: 4px 0; text-align: left !important; }
   .records td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--text-3); }
   .records td[data-label="Business"]::before { display: none; }
-  .records td[data-label="Business"] { padding-right: 36px; min-width: 0; }
-  .records td[data-label="Address"] { min-width: 0; }
+  .records td[data-label="Business"] { padding-right: 36px; }
   .records td.remove-cell { position: absolute; top: 8px; right: 6px; width: auto; padding: 0; }
 }
 

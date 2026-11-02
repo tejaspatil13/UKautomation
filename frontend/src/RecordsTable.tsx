@@ -40,18 +40,28 @@ export function SharedTag({ row }: { row: BusinessRow }) {
   );
 }
 
+const RV_SHOWN = 3; // more than this: the rest behind "+ N more"
+
 /** Every rateable value the business has, with a link to each one's Gov.uk record underneath. */
 export function RateableValues({ row }: { row: BusinessRow }) {
+  const [all, setAll] = useState(false);
   const props = row.properties;
+  const shown = all || props.length <= RV_SHOWN ? props : props.slice(0, RV_SHOWN);
+  const hidden = props.length - shown.length;
   return (
     <div className="rvs">
-      {props.map((p) => <span key={p.uarn} className="rv-value">{gbp(p.rv)}</span>)}
+      {shown.map((p) => <span key={p.uarn} className="rv-value">{gbp(p.rv)}</span>)}
+      {props.length > RV_SHOWN && (
+        <button type="button" className="link-btn rv-more" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? "Show less" : `+ ${hidden} more`}
+        </button>
+      )}
       {props.length === 1 ? (
         <a className="sub chip-link" href={props[0].source_url} target="_blank" rel="noreferrer">Gov.uk record ↗</a>
       ) : (
         <span className="sub gov-links">
           Gov.uk records:{" "}
-          {props.map((p, i) => (
+          {shown.map((p, i) => (
             <a key={p.uarn} href={p.source_url} target="_blank" rel="noreferrer" title={`${gbp(p.rv)} · ${p.address}`}>{i + 1}</a>
           ))}
         </span>
@@ -69,11 +79,11 @@ export function RecordsTable({ items, onRemove, empty }: {
       <table className="records">
         <thead>
           <tr>
-            <th>Business</th>
-            <th>Phone</th>
+            <th className="col-biz">Business</th>
+            <th className="col-phone">Phone</th>
             <th>Address</th>
-            <th className="num">Rateable value</th>
-            {onRemove && <th><span className="sr-only">Remove</span></th>}
+            <th className="num col-rv">Rateable value</th>
+            {onRemove && <th className="col-remove"><span className="sr-only">Remove</span></th>}
           </tr>
         </thead>
         <tbody>
