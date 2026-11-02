@@ -1,8 +1,7 @@
 # Copilot desktop conversion: test report
 
-**Status (2 Nov 2026): everything that can run on macOS has run and passed. Nothing has yet run
-on Windows.** The Windows build has never been executed, because CI starts only once the code is
-pushed. Per the acceptance criteria, **the installer must not go to the client** until the Windows
+**Status (2 Nov 2026): everything that can run on macOS has run and passed. The automatic Windows
+build (CI, C1–C5) has run and passed. Nothing has yet run on a real Windows PC.** Per the acceptance criteria, **the installer must not go to the client** until the Windows
 sections below are completed and pass.
 
 Only results that were actually observed are recorded here.
@@ -69,11 +68,19 @@ Fill in this table as each item is done. **All must pass before the client relea
 
 | # | Check | Result |
 |---|---|---|
-| C1 | Backend suite on Windows, including the real file-locking test | not run |
-| C2 | Desktop suite on Windows | not run |
-| C3 | PyInstaller Windows build | not run |
-| C4 | `Copilot.exe --self-test` on the Windows runner (pythonnet/WebView2 import, tzdata, httpfs.dll, `--run-import`) | not run |
-| C5 | `vpk pack` (installer, WebView2 bootstrap) and `vpk upload github` (test pre-release) | not run |
+| C1 | Backend suite on Windows, including the real file-locking test | **151 passed**, 0 skipped ([run](https://github.com/tejaspatil13/UKautomation/actions/runs/41410031876)). The first run found 3 Windows failures; see below |
+| C2 | Desktop suite on Windows | **47 passed**, 10 skipped (the live licence-server tests: no server configured in CI) |
+| C3 | PyInstaller Windows build | passed |
+| C4 | `Copilot.exe --self-test` on the Windows runner (pythonnet/WebView2 import, tzdata, httpfs.dll, `--run-import`) | **all 8 passed** (build 1.0.0-test.3) |
+| C5 | `vpk pack` (installer, WebView2 bootstrap) and `vpk upload github` (test pre-release) | pack **passed**: `CopilotAppTest-test-Setup.exe`, 64-bit, kept as a build artifact. Upload **not run yet**: it starts once the test licence server variables are set |
+
+Windows failures found by the first CI run, all fixed:
+
+- **App bug:** Copilot couldn't start on Windows if its search-history file was damaged. Python's
+  `with sqlite3.connect()` doesn't close the file, so Windows refused to set it aside. Fixed in
+  `jobs.py`.
+- Two tests assumed Mac behaviour (replacing a file that is still open); fixed in the tests.
+- Velopack packaged the app as x86 by default; it's now packaged as 64-bit (`--runtime win-x64`).
 
 ### Windows test PC: installation
 
