@@ -154,6 +154,76 @@ jobs:
           path: Releases/
           retention-days: 30
 
+      - name: Install, open the real window, second launch (as the user does)
+        run: |
+          New-Item -ItemType Directory -Force window-test | Out-Null
+          $setup = Get-ChildItem Releases\*-Setup.exe | Select-Object -First 1
+          $p = Start-Process $setup.FullName -ArgumentList "--silent" -PassThru
+          if (-not $p.WaitForExit(300000)) { throw "Setup did not finish within 5 minutes" }
+          if ($p.ExitCode -ne 0) { throw "Setup failed (exit $($p.ExitCode))" }
+          $exe = "$env:LOCALAPPDATA\${{ steps.plan.outputs.packid }}\current\Copilot.exe"
+          if (-not (Test-Path $exe)) { throw "Copilot.exe was not installed at $exe" }
+          $links = Get-ChildItem "$env:USERPROFILE\Desktop", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" `
+            -Filter "Copilot*.lnk" -Recurse -ErrorAction SilentlyContinue
+          "Shortcuts: $($links.FullName -join ', ')"
+          if (-not $links) { throw "No Start menu or desktop shortcut was created" }
+          Get-Process Copilot -ErrorAction SilentlyContinue | Stop-Process -Force  # in case Setup started it
+          Start-Sleep 2
+
+          $log = "$env:LOCALAPPDATA\Copilot\logs\copilot.log"
+          $app = Start-Process $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Get-Date) -lt $deadline -and -not $app.HasExited -and
+                 -not (Select-String -Path $log -Pattern "window connected" -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep 2 }
+          Start-Sleep 10  # let the page render before the screenshot
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$pwd\window-test\window.png")
+
+          $second = Start-Process $exe -PassThru  # must hand over to the open window and exit
+          $secondExited = $second.WaitForExit(30000)
+          Start-Sleep 2
+          $alive = -not $app.HasExited
+          Get-Process Copilot -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+          Copy-Item $log window-test\ -ErrorAction SilentlyContinue
+          Get-Content $log -ErrorAction SilentlyContinue
+
+          $text = Get-Content $log -Raw -ErrorAction SilentlyContinue
+          $fail = @()
+          if (-not $alive) { $fail += "the app closed by itself" }
+          if ($text -notmatch "window connected") { $fail += "the window never got past the session check" }
+          if ($text -match "refused ") { $fail += "requests from the window were refused" }
+          if (-not $secondExited) { $fail += "a second launch did not exit" }
+          if ($text -notmatch "come to the front") { $fail += "a second launch did not reach the open window" }
+          if ($text -match " ERROR ") { $fail += "errors in copilot.log" }
+          if ($fail) { throw "Window test failed: $($fail -join '; ')" }
+          "Window test passed"
+
+      - name: Uninstall keeps the data folder
+        run: |
+          New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Copilot\data" | Out-Null
+          Set-Content "$env:LOCALAPPDATA\Copilot\data\keep.txt" "user data"
+          $update = "$env:LOCALAPPDATA\${{ steps.plan.outputs.packid }}\Update.exe"
+          $p = Start-Process $update -ArgumentList "uninstall", "--silent" -PassThru
+          if (-not $p.WaitForExit(120000)) { throw "Uninstall did not finish within 2 minutes" }
+          "Uninstall exit code: $($p.ExitCode)"
+          Start-Sleep 3
+          if (Test-Path "$env:LOCALAPPDATA\${{ steps.plan.outputs.packid }}\current\Copilot.exe") { throw "The program was not removed" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Copilot\data\keep.txt")) { throw "Uninstall deleted the user's data" }
+          "Uninstall passed: program removed, data kept"
+
+      - name: Keep the window test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-test-${{ steps.plan.outputs.version }}
+          path: window-test/
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Publish GitHub Release
         if: steps.plan.outputs.publish == 'true'
         run: |

@@ -55,6 +55,7 @@ class DesktopState:
     port: int = 0
     on_focus: Callable[[], None] | None = None
     on_restart_to_update: Callable[[], None] | None = None
+    window_connected: bool = False  # the window has passed the cookie check (logged once; CI looks for it)
 
 
 def default_name() -> str:
@@ -124,6 +125,9 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
 
     @outer.get("/desktop/status")
     def status():
+        if not state.window_connected:
+            state.window_connected = True
+            log.info("window connected")
         return _status(main_app, state)
 
     @outer.post("/desktop/license/check")
@@ -156,6 +160,7 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
         if not state.focus_secret or not secrets.compare_digest(
                 request.headers.get("x-copilot-focus", ""), state.focus_secret):
             return Response(status_code=403)
+        log.info("another launch asked this window to come to the front")
         if state.on_focus:
             state.on_focus()
         return Response(status_code=204)
