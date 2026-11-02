@@ -72,11 +72,13 @@ Fill in this table as each item is done. **All must pass before the client relea
 | C2 | Desktop suite on Windows | **47 passed**, 10 skipped (the live licence-server tests: no server configured in CI) |
 | C3 | PyInstaller Windows build | passed |
 | C4 | `Copilot.exe --self-test` on the Windows runner (pythonnet/WebView2 import, tzdata, httpfs.dll, `--run-import`) | **all 8 passed** (build 1.0.0-test.3) |
-| C5 | `vpk pack` (installer, WebView2 bootstrap) and `vpk upload github` (test pre-release) | pack **passed**: `CopilotAppTest-test-Setup.exe`, 64-bit, kept as a build artifact. Upload **not run yet**: it starts once the test licence server variables are set |
+| C5 | `vpk pack` (installer, WebView2 bootstrap) and `vpk upload github` (test pre-release) | **passed**: first test release `v1.0.0-test.8` published (Setup.exe, full package, releases.test.json) |
 
 | C6 | Install `Setup.exe` silently, open the installed app's real window, screenshot | **passed** ([run](https://github.com/tejaspatil13/UKautomation/actions/runs/41419650183)): shortcuts created; the window shows the Copilot start-up screen |
 | C7 | Second launch brings the open window to the front and exits | **passed** |
 | C8 | Uninstall removes the program and keeps `%LOCALAPPDATA%\Copilot` | **passed** |
+| C9 | Installed app activates against the real **test** licence server | **passed** (`licence state: active`, build test.8) |
+| C10 | The previous test release, installed, downloads the new one by itself and installs it when closed | see the next build |
 
 Windows failures found by CI, all fixed:
 
