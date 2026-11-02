@@ -13,6 +13,7 @@ Run by hand:
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from app import dbswap
+from app import dbswap, progress
 from app.config import Settings, get_settings
 
 log = logging.getLogger(__name__)
@@ -82,7 +83,25 @@ class Dataset:
     last_checked: str = ""
     last_error: str = ""
     updating: bool = False
+    started_at: float = 0.0  # time.time() when the running update began
     extra: dict = field(default_factory=dict)
+    _progress: dict | None = None  # last progress read, kept if one read fails mid-write
+
+    @property
+    def progress_file(self) -> Path:
+        return self.db_path.with_name(self.db_path.stem + ".progress.json")
+
+    def progress(self) -> dict | None:
+        """What the running import is doing, for the dashboard (None when not updating)."""
+        if not self.updating:
+            return None
+        self._progress = progress.read(self.progress_file) or self._progress
+        p = dict(self._progress or {"stage": "Starting"})
+        now = time.time()
+        p["elapsed_s"] = int(now - self.started_at)
+        # Seconds since the import last reported anything: a long silence means it may be stuck.
+        p["idle_s"] = int(now - max(p.pop("at", 0) or 0, self.started_at))
+        return p
 
     def needs_update(self) -> bool:
         if not self.available_version:
@@ -100,7 +119,7 @@ class Dataset:
         return {
             "name": self.name, "installed": self.installed_version.split("#")[0].rsplit("/", 1)[-1],
             "available": self.available_version.split("#")[0].rsplit("/", 1)[-1],
-            "update_pending": self.needs_update(), "updating": self.updating,
+            "update_pending": self.needs_update(), "updating": self.updating, "progress": self.progress(),
             "last_checked": self.last_checked, "last_error": self.last_error,
         }
 
@@ -148,8 +167,10 @@ def import_command(module: str) -> list[str]:
     return [sys.executable, "-m", module]
 
 
-async def run_import(module: str, log_file: Path | None = None) -> bool:
+async def run_import(module: str, log_file: Path | None = None, progress_file: Path | None = None) -> bool:
     kwargs: dict = {} if getattr(sys, "frozen", False) else {"cwd": BACKEND_DIR}
+    if progress_file:
+        kwargs["env"] = {**os.environ, "UKA_PROGRESS_FILE": str(progress_file)}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     out = log_file.open("ab") if log_file else None
@@ -220,12 +241,16 @@ async def update(ds: Dataset, on_updated: Callable[[], None] | None = None,
                          f"{free:.1f} GB free). The current data is still in use.")
         log.error("%s: %s", ds.name, ds.last_error)
         return False
+    ds.progress_file.unlink(missing_ok=True)
+    ds._progress, ds.started_at = None, time.time()
     ds.updating = True
     ds.last_error = ""
     try:
         log.info("updating %s: %s -> %s", ds.name, ds.installed_version or "nothing", ds.available_version)
-        ok = await run_import(ds.module, ds.log_file)
+        ok = await run_import(ds.module, ds.log_file, ds.progress_file)
         if ok:
+            ds._progress = {"stage": "Installing the new data", "at": time.time()}
+            ds.progress_file.unlink(missing_ok=True)
             await install_ready(ds, release)
             ds.installed_version = ds.installed(read_meta(ds.db_path) or {})
             if on_updated:
@@ -235,6 +260,7 @@ async def update(ds: Dataset, on_updated: Callable[[], None] | None = None,
         return ok
     finally:
         ds.updating = False
+        ds.progress_file.unlink(missing_ok=True)
 
 
 async def install_pending(state: list[Dataset], callbacks: dict[str, Callable[[], None]],

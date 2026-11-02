@@ -254,7 +254,14 @@ button, input, select { font: inherit; color: inherit; }
 .btn-small { height: 30px; padding: 0 12px; font-size: 13px; }
 .btn-small.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .update-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
-.update-list li { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 14px; }
+.update-list li { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 14px; }
+.update-row { display: flex; justify-content: space-between; gap: 16px; }
+.update-progress { margin-top: 10px; display: grid; gap: 6px; }
+.update-progress-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-2); }
+/* No known total (e.g. "searching the map data"): a moving stripe shows it's still working. */
+.bar-busy div { background: linear-gradient(90deg, var(--accent-soft) 0%, var(--accent) 50%, var(--accent-soft) 100%); background-size: 200% 100%; animation: bar-busy 1.6s linear infinite; }
+@keyframes bar-busy { from { background-position: 200% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .bar-busy div { animation: none; } }
 .update-name { font-weight: 500; }
 .update-ok { color: var(--green); }
 .update-new { color: var(--accent); font-weight: 500; text-align: right; }

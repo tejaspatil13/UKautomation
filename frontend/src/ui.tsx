@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { api, ApiError, DataUpdate } from "./api";
+import { api, ApiError, DataUpdate, ImportProgress } from "./api";
 
 export const gbp = (n: number) => "£" + n.toLocaleString("en-GB");
 export const when = (iso: string) =>
@@ -153,6 +153,54 @@ export function DownloadDialog({ open, defaultName, summary, rows, allowSplit = 
   );
 }
 
+function size(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+
+function duration(s: number): string {
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+/** "Downloading · file 3 of 40 · 312 MB of 480 MB" — one line for the footer and the dialog. */
+export function progressText(p: ImportProgress): string {
+  const parts = [p.stage];
+  if (p.step && p.steps) parts.push(`file ${p.step} of ${p.steps}`);
+  if (p.done != null && p.unit === "bytes") parts.push(p.total ? `${size(p.done)} of ${size(p.total)}` : size(p.done));
+  else if (p.done != null) parts.push(`${p.done.toLocaleString()} ${p.unit}`);
+  return parts.join(" · ");
+}
+
+function percent(p: ImportProgress): number | null {
+  if (p.done != null && p.total) return Math.min(100, Math.round((p.done / p.total) * 100));
+  return null;
+}
+
+export function looksStuck(p: ImportProgress): boolean {
+  return p.idle_s > Math.max(300, p.quiet_s ?? 0);
+}
+
+function ProgressDetail({ p }: { p: ImportProgress }) {
+  const pct = percent(p);
+  return (
+    <div className="update-progress">
+      <div className="update-progress-line">
+        <span>{progressText(p)}</span>
+        <span className="mono">{pct != null ? `${pct}%` : ""}</span>
+      </div>
+      <div className={`bar${pct == null ? " bar-busy" : ""}`}><div style={{ width: `${pct ?? 100}%` }} /></div>
+      <div className="small muted">Running for {duration(p.elapsed_s)}</div>
+      {looksStuck(p) && (
+        <div className="small warn" role="alert">
+          No progress for {duration(p.idle_s)}. Check the internet connection: the download carries on by
+          itself when it’s back. If it stays like this, close and reopen Copilot to start it again.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function UpdatesDialog({ open, onInstall, onClose }: {
   open: boolean; onInstall: () => Promise<void>; onClose: () => void;
 }) {
@@ -167,6 +215,12 @@ export function UpdatesDialog({ open, onInstall, onClose }: {
 
   const pending = (items ?? []).filter((d) => d.update_pending && !d.updating);
   const updating = (items ?? []).some((d) => d.updating);
+  // While something installs, follow it live (this reads local status only: no new check online).
+  useEffect(() => {
+    if (!open || !updating) return;
+    const t = setInterval(() => api.meta().then((m) => setItems(m.data_updates)).catch(() => undefined), 2000);
+    return () => clearInterval(t);
+  }, [open, updating]);
 
   async function install() {
     setBusy(true);
@@ -185,14 +239,18 @@ export function UpdatesDialog({ open, onInstall, onClose }: {
       {items && (
         <ul className="update-list">
           {items.map((d) => (
-            <li key={d.name}>
-              <span className="update-name">{d.name}</span>
-              <span className={d.update_pending ? "update-new" : d.last_error ? "warn" : "update-ok"}>
-                {d.updating ? "Installing now…"
-                  : d.last_error ? d.last_error
-                  : d.update_pending ? (d.installed ? `New version ${d.available}` : "Not installed yet")
-                  : "Up to date"}
-              </span>
+            <li key={d.name} className={d.updating ? "updating" : ""}>
+              <div className="update-row">
+                <span className="update-name">{d.name}</span>
+                <span className={d.update_pending ? "update-new" : d.last_error ? "warn" : "update-ok"}>
+                  {d.updating ? "Installing now"
+                    : d.last_error ? d.last_error
+                    : d.update_pending && updating ? "Waiting: installs after the current one"
+                    : d.update_pending ? (d.installed ? `New version ${d.available}` : "Not installed yet")
+                    : "Up to date"}
+                </span>
+              </div>
+              {d.updating && d.progress && <ProgressDetail p={d.progress} />}
             </li>
           ))}
         </ul>

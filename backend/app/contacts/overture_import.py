@@ -19,6 +19,7 @@ import duckdb
 import httpx
 
 from app.config import get_settings
+from app import progress
 from app.dbswap import swap_in
 from app.normalize import normalize_postcode
 
@@ -58,6 +59,7 @@ def import_release(release: str, db_path) -> int:
     duck.execute(f"SET memory_limit='{os.environ.get('UKA_DUCKDB_MEMORY', '256MB')}'; SET threads=2;")
     started = time.monotonic()
     log.info("querying Overture %s for England & Wales (this scans remote parquet; expect several minutes)", release)
+    progress.report("Searching the map data for England & Wales (can take 10-30 minutes)", force=True, quiet_s=3600)
     tmp = db_path.with_suffix(".importing")
     tmp.unlink(missing_ok=True)
     con = sqlite3.connect(tmp)
@@ -82,6 +84,8 @@ def import_release(release: str, db_path) -> int:
         )
         count += len(rows)
         log.info("stored %s places (%.0fs)", f"{count:,}", time.monotonic() - started)
+        progress.report("Downloading businesses", count, None, "places", force=True)
+    progress.report("Building the search index", force=True)
     con.execute("CREATE INDEX ix_places_postcode ON places(postcode)")
     # Partial index: the proximity lookup only ever reads places that lack a postcode.
     con.execute("CREATE INDEX ix_places_nopc_latlon ON places(lat, lon) WHERE postcode = ''")

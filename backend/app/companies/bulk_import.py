@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 
 from app.config import get_settings
+from app import progress
 from app.dbswap import swap_in
 from app.normalize import clean_ws, normalize_postcode
 
@@ -74,17 +75,23 @@ def latest_release() -> str:
     return latest_files()[0]
 
 
-def _download(name: str, dest: Path) -> None:
+def _download(name: str, dest: Path, step: int | None = None, steps: int | None = None) -> None:
     for attempt in range(4):  # slow office connections drop now and then: retry the part
         try:
             with httpx.stream("GET", f"{BASE}/{name}", timeout=httpx.Timeout(60, read=300)) as r:
                 r.raise_for_status()
+                total, done = int(r.headers.get("content-length") or 0) or None, 0
+                progress.report("Downloading", 0, total, "bytes", step, steps, force=True)
                 with open(dest, "wb") as f:
                     for chunk in r.iter_bytes(1 << 20):
                         f.write(chunk)
+                        done += len(chunk)
+                        progress.report("Downloading", done, total, "bytes", step, steps)
             return
         except httpx.HTTPError as e:
             log.warning("download of %s failed (%s), retrying", name, e)
+            progress.report(f"Connection dropped; retrying in {10 * (attempt + 1)} s", None, None, "", step, steps,
+                            force=True)
             time.sleep(10 * (attempt + 1))
     raise RuntimeError(f"Could not download {name}")
 
@@ -143,19 +150,23 @@ def import_companies(db_path: Path) -> tuple[int, int]:
     con.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;" + SCHEMA)
     work = db_path.with_name("companies-part.zip.download")
     try:
-        for name in basic_parts:
-            _download(name, work)
+        steps = len(basic_parts) + len(psc_parts)
+        for i, name in enumerate(basic_parts, 1):
+            _download(name, work, i, steps)
+            progress.report("Reading companies", None, None, "", i, steps, force=True)
             con.executemany("INSERT INTO companies VALUES (?,?,?,?,?,?,?,?)", read_companies(work))
             con.commit()
             log.info("%s imported (%.0fs)", name, time.monotonic() - started)
         wanted = {r[0] for r in con.execute("SELECT number FROM companies")}
-        for name in psc_parts:
-            _download(name, work)
+        for i, name in enumerate(psc_parts, len(basic_parts) + 1):
+            _download(name, work, i, steps)
+            progress.report("Reading owners", None, None, "", i, steps, force=True)
             con.executemany("INSERT INTO psc VALUES (?,?,?,?,?,?)", read_psc(work, wanted))
             con.commit()
             log.info("%s imported (%.0fs)", name, time.monotonic() - started)
     finally:
         work.unlink(missing_ok=True)
+    progress.report("Building the search index", force=True)
     # Indexes are built once at the end: compact, and much faster than growing them row by row.
     con.execute("CREATE INDEX ix_companies_postcode ON companies(postcode)")
     con.execute("CREATE INDEX ix_psc_company ON psc(company_number)")

@@ -119,12 +119,25 @@ export interface OwnerRun {
   message: string;
 }
 
+export interface ImportProgress {
+  stage: string;
+  done: number | null;
+  total: number | null;
+  unit: string; // "bytes", "rows", "places" or ""
+  step: number | null; // file 3 of 40
+  steps: number | null;
+  quiet_s?: number; // this stage may go this long without news before it looks stuck
+  elapsed_s: number;
+  idle_s: number; // seconds since the import last reported anything
+}
+
 export interface DataUpdate {
   name: string;
   installed: string;
   available: string;
   update_pending: boolean;
   updating: boolean;
+  progress: ImportProgress | null;
   last_checked: string;
   last_error: string;
 }

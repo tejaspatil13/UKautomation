@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 
 from app.config import get_settings
+from app import progress
 from app.dbswap import swap_in
 from app.normalize import clean_ws, normalize_postcode
 
@@ -118,8 +119,10 @@ def import_zip(
                 count += len(batch)
                 batch.clear()
                 log.info("imported %s rows (%.0fs)", f"{count:,}", time.monotonic() - started)
+                progress.report("Importing", count, None, "rows")
         con.executemany(insert, batch)
         count += len(batch)
+        progress.report("Building the search index", force=True)
         con.executescript(INDEXES)
         meta = {
             "source_file": name,
@@ -152,9 +155,13 @@ def download(url: str, dest: Path) -> Path:
     part = dest.with_suffix(".part")
     with httpx.stream("GET", url, timeout=httpx.Timeout(60, read=300), follow_redirects=True) as r:
         r.raise_for_status()
+        total, done = int(r.headers.get("content-length") or 0) or None, 0
+        progress.report("Downloading", 0, total, "bytes", force=True)
         with part.open("wb") as fh:
             for chunk in r.iter_bytes(1 << 20):
                 fh.write(chunk)
+                done += len(chunk)
+                progress.report("Downloading", done, total, "bytes")
     os.replace(part, dest)
     return dest
 

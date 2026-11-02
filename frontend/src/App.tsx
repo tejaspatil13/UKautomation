@@ -3,14 +3,19 @@ import { api, Meta } from "./api";
 import { SearchView } from "./SearchView";
 import { CustomersView } from "./CustomersView";
 import { SheetView } from "./SheetView";
-import { NameDialog, storage, Toasts, UpdatesDialog, useToasts, when } from "./ui";
+import { looksStuck, NameDialog, progressText, storage, Toasts, UpdatesDialog, useToasts, when } from "./ui";
 
 type Tab = "search" | "sheet" | "customers";
 const TABS: Tab[] = ["search", "sheet", "customers"];
 
 function updateNote(meta: Meta | null): string {
   const u = meta?.data_updates ?? [];
-  if (u.some((d) => d.updating)) return "Installing new data now — searches keep working";
+  const busy = u.find((d) => d.updating);
+  if (busy) {
+    const p = busy.progress;
+    if (p && looksStuck(p)) return `${busy.name}: no progress for a while — open Check for updates for details`;
+    return `Installing ${busy.name}${p ? `: ${progressText(p)}` : ""}`;
+  }
   if (u.some((d) => d.update_pending)) return "New data available — install it now or it installs tonight";
   const checked = u.map((d) => d.last_checked).filter(Boolean).sort().pop();
   return checked ? `Checked for new data ${when(checked)}` : "Checks for new data daily";
@@ -35,7 +40,7 @@ export default function App() {
   const installing = meta?.data_updates.some((d) => d.updating) ?? false;
   useEffect(() => {
     if (!installing) return;
-    const t = setInterval(loadMeta, 15000);
+    const t = setInterval(loadMeta, 3000);  // live progress in the footer
     return () => clearInterval(t);
   }, [installing, loadMeta]);
 

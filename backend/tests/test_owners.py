@@ -284,7 +284,7 @@ def test_update_button_checks_then_installs(make_client, monkeypatch):
 
     installed = []
 
-    async def fake_import(module, log_file=None):
+    async def fake_import(module, log_file=None, progress_file=None):
         installed.append(module)
         return True
 
