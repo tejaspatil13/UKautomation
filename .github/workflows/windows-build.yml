@@ -155,6 +155,8 @@ jobs:
           retention-days: 30
 
       - name: Install, open the real window, second launch (as the user does)
+        env:
+          UKA_AUTO_IMPORT_ON_START: "false"  # don't download the 4 GB of datasets on the build machine
         run: |
           New-Item -ItemType Directory -Force window-test | Out-Null
           $setup = Get-ChildItem Releases\*-Setup.exe | Select-Object -First 1
@@ -237,3 +239,54 @@ jobs:
           vpk upload github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" `
             --channel ${{ steps.plan.outputs.channel }} --publish @extra `
             --releaseName "Copilot ${{ steps.plan.outputs.version }}" --tag "v${{ steps.plan.outputs.version }}"
+
+      - name: Update test - the previous test release updates itself to this one
+        if: steps.plan.outputs.publish == 'true' && steps.plan.outputs.channel == 'test'
+        env:
+          UKA_AUTO_IMPORT_ON_START: "false"
+          COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # GitHub's rate limit on shared build machines
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $new = "${{ steps.plan.outputs.version }}"
+          $releases = gh api "repos/${{ github.repository }}/releases?per_page=30" | ConvertFrom-Json
+          $prev = $releases | Where-Object { $_.prerelease -and $_.tag_name -ne "v$new" -and
+                                             ($_.assets | Where-Object name -like "*-Setup.exe") } | Select-Object -First 1
+          if (-not $prev) { "No earlier test release yet: the update test runs from the next build on."; exit 0 }
+          "Installing the previous release $($prev.tag_name), expecting it to update to $new"
+          gh release download $prev.tag_name --repo "${{ github.repository }}" --pattern "*-Setup.exe" --dir prev
+          $p = Start-Process (Get-ChildItem prev\*-Setup.exe | Select-Object -First 1).FullName -ArgumentList "--silent" -PassThru
+          if (-not $p.WaitForExit(300000) -or $p.ExitCode -ne 0) { throw "Installing the previous release failed" }
+          Get-Process Copilot -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+
+          $root = "$env:LOCALAPPDATA\${{ steps.plan.outputs.packid }}"
+          $log = "$env:LOCALAPPDATA\Copilot\logs\copilot.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          function Read-Log {
+            try {
+              $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite, Delete')
+              try { (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+            } catch { "" }
+          }
+          $app = Start-Process "$root\current\Copilot.exe" -PassThru
+          $deadline = (Get-Date).AddMinutes(8)
+          while ((Get-Date) -lt $deadline -and -not $app.HasExited -and
+                 (Read-Log) -notmatch "update $([regex]::Escape($new)) downloaded") { Start-Sleep 5 }
+          $downloaded = (Read-Log) -match "update $([regex]::Escape($new)) downloaded"
+
+          # Close the window as the user would ("Later", then close): the update installs on exit.
+          $null = $app.CloseMainWindow()
+          if (-not $app.WaitForExit(60000)) { $app | Stop-Process -Force; throw "Copilot did not close" }
+          $deadline = (Get-Date).AddMinutes(3)
+          do { Start-Sleep 5 } while ((Get-Date) -lt $deadline -and (Get-Process Update -ErrorAction SilentlyContinue))
+          Start-Sleep 5
+
+          $env:COPILOT_HOME = "$env:RUNNER_TEMP\copilot-update-check"
+          $t = Start-Process "$root\current\Copilot.exe" -ArgumentList "--self-test" -PassThru
+          $null = $t.WaitForExit(180000)
+          $build = (Get-Content "$env:COPILOT_HOME\logs\selftest.json" -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json).build
+          Read-Log
+          Get-Content "$root\velopack.log" -Tail 40 -ErrorAction SilentlyContinue
+          if (-not $downloaded) { throw "The previous release did not download $new" }
+          if ($build -notlike "$new *") { throw "After closing, the installed version is '$build', expected $new" }
+          "Update test passed: $($prev.tag_name) updated itself to $build"

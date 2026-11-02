@@ -122,7 +122,8 @@ def backend_environment(paths: Paths) -> dict[str, str]:
         "UKA_DATA_DIR": str(paths.data),
         "UKA_FRONTEND_DIST": str(res / "frontend" / "dist"),
         "UKA_TEMPLATE_PATH": str(res / "templates" / "output_template.xlsx"),
-        "UKA_AUTO_IMPORT_ON_START": "true",  # first launch downloads the datasets (existing behaviour on the server)
+        # first launch downloads the datasets (existing behaviour on the server); CI turns this off
+        "UKA_AUTO_IMPORT_ON_START": os.environ.get("UKA_AUTO_IMPORT_ON_START", "true"),
         "UKA_APP_PASSWORD": "",  # one user on their own PC, reachable only from this PC: no dashboard password
         "UKA_IMPORT_LOG_PATH": str(paths.logs / "import.log"),
     }

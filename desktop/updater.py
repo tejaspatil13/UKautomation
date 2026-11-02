@@ -9,6 +9,7 @@ An update is downloaded in the background and installed when the user chooses Re
 automatically the next time Copilot is closed.
 """
 import logging
+import os
 import threading
 import time
 
@@ -42,7 +43,9 @@ class Updater:
         try:
             import velopack
 
-            source = velopack.GithubSource(repo, None, channel == "test")  # test builds read pre-releases
+            # Test builds read pre-releases. No token: the releases are public. CI sets one only to avoid
+            # GitHub's rate limit on its shared machines.
+            source = velopack.GithubSource(repo, os.environ.get("COPILOT_GITHUB_TOKEN") or None, channel == "test")
             self._um = velopack.UpdateManager(source)
             self.current = self._um.get_current_version()
             self.status = "idle"

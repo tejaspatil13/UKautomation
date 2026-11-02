@@ -71,9 +71,24 @@ a SIGNING_KEY, make a new pair and release a new build with the new public key.
 **6. Recommended:** in **Settings → Environments**, create **production** and add yourself as a
 required reviewer. Every client release then waits for your approval.
 
+## Your servers (set up 2 Nov 2026)
+
+| | Address |
+|---|---|
+| Test | https://copilot-license-test.copilot-license-server.workers.dev |
+| Production | https://copilot-license.copilot-license-server.workers.dev |
+
+The signing keys and admin tokens are in `~/.copilot-license/secrets.env` on the Mac (readable
+only by you, outside the repository). Copy them into a password manager. To load them for
+`admin.py` in a terminal:
+
+```bash
+set -a; . ~/.copilot-license/secrets.env; set +a
+```
+
 ## Daily administration
 
-Set these once per terminal session (or in your shell profile):
+Or set these yourself once per terminal session (or in your shell profile):
 
 ```bash
 export COPILOT_LICENSE_URL_TEST=https://copilot-license-test.<your-subdomain>.workers.dev

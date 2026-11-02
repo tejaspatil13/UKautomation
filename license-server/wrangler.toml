@@ -14,7 +14,7 @@ vars = { ENVIRONMENT = "test", TRIAL_SECONDS = "600" }
 [[env.test.d1_databases]]
 binding = "DB"
 database_name = "copilot-license-test"
-database_id = "00000000-0000-0000-0000-000000000000"  # replace after `wrangler d1 create copilot-license-test`
+database_id = "4d1df0fb-73f6-4186-b8a6-4bf261bbf782"
 
 [env.production]
 name = "copilot-license"
@@ -23,4 +23,4 @@ vars = { ENVIRONMENT = "production" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "copilot-license"
-database_id = "00000000-0000-0000-0000-000000000000"  # replace after `wrangler d1 create copilot-license`
+database_id = "b45c3662-6adb-4a56-bff4-046219ae01c8"
