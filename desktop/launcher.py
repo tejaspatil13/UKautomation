@@ -119,7 +119,7 @@ def run_app(cfg: BuildConfig, paths: Paths, instance: SingleInstance, debug: boo
     os.environ.update(backend_environment(paths))  # before the backend reads its settings
     import app.main
     from app import refresh
-    from desktop.server import BackendServer, DesktopState, build_app
+    from desktop.server import SESSION_HEADER, BackendServer, DesktopState, build_app
 
     window_ref: dict = {}
     base = {"url": ""}
@@ -150,6 +150,19 @@ def run_app(cfg: BuildConfig, paths: Paths, instance: SingleInstance, debug: boo
     window = webview.create_window("Copilot", f"{base['url']}/desktop/start?token={state.session_token}",
                                    width=1360, height=900, min_size=(1024, 680), text_select=True)
     window_ref["w"] = window
+
+    # The window also proves itself with a header on every request to the local server: WebView2 on
+    # Windows didn't send the session cookie back (seen on a real PC and in CI). pywebview runs
+    # request_sent handlers on a background thread unless the event is locked; locked, the header is
+    # added before WebView2 sends the request.
+    from webview.event import Event
+
+    def add_session_header(request):
+        if request.url.startswith(base["url"] + "/"):
+            request.headers[SESSION_HEADER] = state.session_token
+
+    window.events.request_sent = Event(window, True)
+    window.events.request_sent += add_session_header
 
     def on_closing():
         if any(d.updating for d in getattr(app.main.app.state, "updates", [])):

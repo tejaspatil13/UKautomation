@@ -51,6 +51,14 @@ def login(client, state):
     assert "httponly" in r.headers["set-cookie"].lower() and "samesite=lax" in r.headers["set-cookie"].lower()
 
 
+def test_the_window_can_use_the_session_header_instead_of_the_cookie(make):
+    client, state = make()
+    with client:
+        assert client.get("/api/health", headers={"X-Copilot-Session": "guess"}).status_code == 403
+        assert client.get("/api/health", headers={"X-Copilot-Session": state.session_token}).json() == {"status": "ok"}
+        assert not client.cookies
+
+
 def test_only_the_window_with_the_session_cookie_gets_in(make):
     client, state = make()
     with client:

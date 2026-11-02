@@ -1,8 +1,9 @@
 """Runs the existing FastAPI app (app.main) inside the desktop app, unchanged, behind a thin wrapper:
 
 - listens on 127.0.0.1 only, on a free port: nothing else on the network can reach it;
-- every request needs this launch's session cookie, which only the Copilot window has (it opens
-  /desktop/start?token=...), and the Host must be 127.0.0.1: other programs and web pages on this PC
+- every request needs this launch's session token, which only the Copilot window has: as a header the
+  window adds to each request, or as the cookie set by /desktop/start?token=...; and the Host must
+  be 127.0.0.1: other programs and web pages on this PC
   (including DNS-rebinding attacks) can't use the API;
 - while the licence isn't active, new searches and processing are refused and the dashboard shows
   the licence screen instead;
@@ -29,6 +30,7 @@ from desktop.license import LicenseManager
 log = logging.getLogger(__name__)
 PAGES = Path(__file__).with_name("pages")
 COOKIE = "copilot_session"
+SESSION_HEADER = "X-Copilot-Session"  # added by the window on Windows, where WebView2 dropped the cookie
 # Starting new work needs a licence. Reading what was already found does not.
 PROCESSING = re.compile(r"^/api/(jobs(/[0-9a-f]{32}/retry)?|owners/run|updates/install)$")
 _NAME_OK = re.compile(r"^[\w '.-]{1,60}$")
@@ -91,8 +93,10 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
             return resp
         if path == "/desktop/focus":
             return await call_next(request)  # authorised by the instance secret instead
-        if not secrets.compare_digest(request.cookies.get(COOKIE, ""), state.session_token):
-            log.warning("refused %s %s: session cookie %s", request.method, path,
+        if not (secrets.compare_digest(request.headers.get(SESSION_HEADER, ""), state.session_token)
+                or secrets.compare_digest(request.cookies.get(COOKIE, ""), state.session_token)):
+            log.warning("refused %s %s: session header %s, cookie %s", request.method, path,
+                        "wrong" if SESSION_HEADER in request.headers else "missing",
                         "wrong" if COOKIE in request.cookies else "missing")
             return Response("Open Copilot from the Start menu or the desktop shortcut.", status_code=403)
         if not state.license.state.allowed:
