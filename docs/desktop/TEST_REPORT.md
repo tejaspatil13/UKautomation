@@ -74,13 +74,21 @@ Fill in this table as each item is done. **All must pass before the client relea
 | C4 | `Copilot.exe --self-test` on the Windows runner (pythonnet/WebView2 import, tzdata, httpfs.dll, `--run-import`) | **all 8 passed** (build 1.0.0-test.3) |
 | C5 | `vpk pack` (installer, WebView2 bootstrap) and `vpk upload github` (test pre-release) | pack **passed**: `CopilotAppTest-test-Setup.exe`, 64-bit, kept as a build artifact. Upload **not run yet**: it starts once the test licence server variables are set |
 
-Windows failures found by the first CI run, all fixed:
+| C6 | Install `Setup.exe` silently, open the installed app's real window, screenshot | **passed** ([run](https://github.com/tejaspatil13/UKautomation/actions/runs/41419650183)): shortcuts created; the window shows the Copilot start-up screen |
+| C7 | Second launch brings the open window to the front and exits | **passed** |
+| C8 | Uninstall removes the program and keeps `%LOCALAPPDATA%\Copilot` | **passed** |
+
+Windows failures found by CI, all fixed:
 
 - **App bug:** Copilot couldn't start on Windows if its search-history file was damaged. Python's
   `with sqlite3.connect()` doesn't close the file, so Windows refused to set it aside. Fixed in
   `jobs.py`.
 - Two tests assumed Mac behaviour (replacing a file that is still open); fixed in the tests.
 - Velopack packaged the app as x86 by default; it's now packaged as 64-bit (`--runtime win-x64`).
+- **App bug (also seen on the test PC):** the installed app showed only "Open Copilot from the Start
+  menu or the desktop shortcut". WebView2 on Windows didn't send the session cookie back. The window
+  now sends its session token as a header on every request. C6 reproduced the failure, then
+  confirmed the fix.
 
 ### Windows test PC: installation
 
