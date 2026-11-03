@@ -106,6 +106,10 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
                                     status_code=403)
             if request.method == "GET" and not path.startswith(("/api/", "/desktop/")):
                 return RedirectResponse("/desktop/", status_code=303)  # the dashboard: show the licence screen
+        if getattr(state.updater, "required", False) and request.method == "POST" and PROCESSING.match(path):
+            return JSONResponse({"detail": [f"A new version of Copilot ({state.updater.version}) must be installed "
+                                            "first. Choose Restart now at the bottom right. Your data and sheets "
+                                            "are kept."]}, status_code=403)
         return await call_next(request)
 
     @outer.get("/")

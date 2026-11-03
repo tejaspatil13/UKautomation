@@ -24,7 +24,7 @@ Copilot.exe (PyInstaller, one folder)
 | `desktop/launcher.py` | Entry point. Also runs `Copilot.exe --run-import <module>`, which replaces `python -m`. |
 | `desktop/server.py` | The wrapper around `app.main.app`, plus uvicorn in a background thread |
 | `desktop/license.py` | Licence client: token checks, offline rules, background re-checks |
-| `desktop/updater.py` | Velopack: check every 4 h (test builds: 15 min), download in the background, install on restart or exit |
+| `desktop/updater.py` | Velopack: check every 15 min (and on **Check for app updates**), download in the background, install on restart or exit. An update left waiting 24 h (test builds: 1 h) blocks new searches until Copilot restarts to install it |
 | `desktop/config.py` | Build channel (dev/test/stable), file locations, backend settings |
 | `desktop/pages/` | Start-up/first-run/licence screen (`desktop.html` + `.js`) and the update notice (`banner.js`) |
 | `desktop/selftest.py` | `Copilot.exe --self-test`: checks the packaged app (run by CI on Windows) |
@@ -112,7 +112,7 @@ and its security checks. A failure stops the release.
 | Push to `main` | Windows build + tests + self-test. If all pass, a **test** pre-release `v1.0.0-test.<run>` is published. Only test builds update from it. |
 | Test it | On the Windows PC, install the `…-Setup.exe` attached to the pre-release (or let the installed test build update itself). Run through `TEST_REPORT.md`. |
 | Approve for the client | Raise `desktop/VERSION` if needed (e.g. `1.0.1`) and push. Then **Actions → Windows desktop build → Run workflow → stable**. With the production environment's reviewer rule set, you approve it in GitHub. |
-| Client receives it | The client's app finds the new **stable** release within 4 hours (or at its next start), downloads it in the background, and installs it on restart or when closed. |
+| Client receives it | The client's app finds the new **stable** release within 15 minutes (at its next start, or straight away with **Check for app updates**), downloads it in the background, and installs it on restart or when closed. If they keep choosing Later, new searches stop after 24 hours until they restart. |
 
 - **Versions:** `desktop/VERSION` holds the next client version. Test builds are
   `<VERSION>-test.<n>`. Velopack sorts these *below* `<VERSION>`, so after releasing `1.0.0` to the

@@ -13,7 +13,7 @@ against a free allowance of 100,000 requests per day. You control everything fro
 - The server answers with a token signed with its **private** Ed25519 key, which never leaves
   Cloudflare. The app contains only the **public** key, so it can check tokens but can't make them.
 - A token is valid only for that computer and that server environment (test or production).
-- Clients check at start-up, every 30 minutes, and whenever the user chooses **Check again**. Test
+- Clients check at start-up, every 5 minutes, and whenever the user chooses **Check again**. Test
   builds check every minute.
 - Offline, a trial keeps working for up to 24 hours since its last check, and never past its end.
   A paid licence works offline for up to 14 days.
@@ -111,7 +111,7 @@ Name a computer by the first few characters of its id, as shown by `list`:
 | Add a note | `… --env production note 3f2a "ACME Ltd, invoice 1042"` |
 | Forget a computer (next start = new trial) | `… --env test reset 3f2a` |
 
-Production changes ask you to type `yes` first. A client picks up a change within 30 minutes, at
+Production changes ask you to type `yes` first. A client picks up a change within 5 minutes, at
 its next start, or immediately when they choose **Check again**. **The client never needs to
 reinstall:** paying simply means you run `paid`.
 

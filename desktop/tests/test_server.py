@@ -196,3 +196,16 @@ def test_default_name_is_safe(monkeypatch):
     assert default_name() == "Tejas Patil"
     monkeypatch.setattr(server.getpass, "getuser", lambda: "DESKTOP-01$<script>")
     assert default_name() == "Copilot"
+
+
+def test_new_searches_wait_for_a_required_update(make):
+    upd = SimpleNamespace(status="ready", version="1.0.1", required=True, enabled=True,
+                          as_dict=lambda: {"status": "ready", "version": "1.0.1", "required": True})
+    client, state = make(updater=upd)
+    with client:
+        login(client, state)
+        r = client.post("/api/jobs", json={"postcode": "CV1 1FJ"})
+        assert r.status_code == 403 and "must be installed" in r.json()["detail"][0]
+        assert client.get("/api/health").status_code == 200  # reading is still allowed
+        upd.required = False
+        assert client.post("/api/jobs", json={"postcode": "CV1 1FJ"}).status_code != 403

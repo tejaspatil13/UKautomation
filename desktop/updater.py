@@ -15,7 +15,10 @@ import time
 
 log = logging.getLogger(__name__)
 # GitHub allows 60 unauthenticated API calls per hour per IP. Test builds check often so fixes arrive quickly.
-CHECK_EVERY_S = {"stable": 4 * 3600, "test": 15 * 60}
+CHECK_EVERY_S = {"stable": 15 * 60, "test": 15 * 60}
+# A downloaded update can wait ("Later") this long; after that new searches stop until Copilot restarts
+# to install it, so nobody keeps working on an old version for days.
+REQUIRED_AFTER_S = {"stable": 24 * 3600, "test": 3600}
 
 
 def run_hooks() -> None:
@@ -39,7 +42,9 @@ class Updater:
         self._lock = threading.Lock()  # the background check and the "Check for app updates" button
         self._um = None
         self._stop = threading.Event()
-        self._every = CHECK_EVERY_S.get(channel, 4 * 3600)
+        self._every = CHECK_EVERY_S.get(channel, CHECK_EVERY_S["stable"])
+        self._required_after = REQUIRED_AFTER_S.get(channel, REQUIRED_AFTER_S["stable"])
+        self.ready_at = 0.0  # when the update finished downloading
         if not repo or channel == "dev":
             return
         try:
@@ -60,7 +65,12 @@ class Updater:
 
     def as_dict(self) -> dict:
         return {"status": self.status, "version": self.version, "progress": self.progress, "error": self.error,
-                "checked_at": self.checked_at}
+                "checked_at": self.checked_at, "required": self.required}
+
+    @property
+    def required(self) -> bool:
+        """The update has waited long enough: it must be installed before new work starts."""
+        return self.status == "ready" and time.time() - self.ready_at >= self._required_after
 
     def check_and_download(self) -> None:
         if not self.enabled or self.status == "ready" or not self._lock.acquire(blocking=False):
@@ -74,7 +84,7 @@ class Updater:
             self.version, self.status, self.progress = info.TargetFullRelease.Version, "downloading", 0
             log.info("downloading update %s", self.version)
             self._um.download_updates(info, self._on_progress)
-            self._pending, self.status = info, "ready"
+            self._pending, self.status, self.ready_at = info, "ready", time.time()
             log.info("update %s downloaded; installs on restart", self.version)
         except Exception as e:  # offline, GitHub rate limit, bad package: try again later, keep running
             log.warning("update check failed: %s", e)

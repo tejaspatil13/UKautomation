@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 log = logging.getLogger(__name__)
 
-CHECK_EVERY_S = {"stable": 30 * 60, "test": 60}  # test builds: admin changes show within a minute
+CHECK_EVERY_S = {"stable": 5 * 60, "test": 60}  # how soon an admin change (expire, paid, revoke) shows
 CLOCK_SLACK_S = 10 * 60  # small differences between this PC's clock and the server's are normal
 CONTACT = "Please contact the developer, Tejas Patil, on 7709288629."
 

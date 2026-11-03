@@ -126,10 +126,15 @@
       const u = st.update;
       showUpdate(u);
       busy = u.status === "checking" || u.status === "downloading";
-      if (u.status === "ready" && u.version !== dismissed) {
+      if (u.status === "ready" && (u.required || u.version !== dismissed)) {
         text.dataset.version = u.version;
-        text.textContent = `A new version of Copilot (${u.version}) is ready. Restart to install it, or it installs ` +
-          "the next time you close Copilot. Your data and sheets are kept.";
+        text.textContent = u.required
+          ? `A new version of Copilot (${u.version}) must be installed before you can start new searches. ` +
+            "Restart now to install it. Your data and sheets are kept."
+          : `A new version of Copilot (${u.version}) is ready. Restart to install it, or it installs ` +
+            "the next time you close Copilot. Your data and sheets are kept.";
+        later.style.display = u.required ? "none" : "";
+        box.style.borderLeftColor = u.required ? "#c0392b" : "#2357c6";
         box.style.display = "block";
       }
     } catch (e) { /* app closing or restarting */ }

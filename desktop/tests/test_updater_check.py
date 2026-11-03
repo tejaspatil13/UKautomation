@@ -43,3 +43,26 @@ def test_a_second_press_while_checking_does_nothing():
     release.set()
     t.join(5)
     assert calls == [1]
+
+
+def test_an_update_left_waiting_becomes_required(monkeypatch):
+    import time as _time
+
+    from desktop import updater as mod
+
+    info = type("Info", (), {"TargetFullRelease": type("R", (), {"Version": "1.0.1"})()})()
+    u = make_updater(lambda: info)
+    u._um.download_updates = staticmethod(lambda i, cb: None)
+    u._required_after = mod.REQUIRED_AFTER_S["stable"]
+    u.check_and_download()
+    assert u.status == "ready" and not u.required  # "Later" is allowed at first
+    later = _time.time() + 25 * 3600
+    monkeypatch.setattr(mod.time, "time", lambda: later)
+    assert u.required and u.as_dict()["required"]  # a day later: must install
+
+
+def test_client_and_test_builds_check_every_15_minutes():
+    from desktop import updater as mod
+
+    assert mod.CHECK_EVERY_S == {"stable": 900, "test": 900}
+    assert mod.REQUIRED_AFTER_S["stable"] == 24 * 3600
