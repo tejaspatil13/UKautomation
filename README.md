@@ -45,6 +45,10 @@ take the newest version at the top, and under **Assets** download `CopilotAppTes
 Run it (if Windows warns you: **More info → Run anyway**). Copilot then updates itself; there is no
 need to download it again. Don't use the build files under *Actions*: those need a GitHub login.
 
+**Mac (Apple Silicon) test build:** from the same release, download `CopilotAppTest-osx-test-Setup.pkg`.
+It isn't signed by Apple yet, so open it with **right-click → Open** (or **System Settings → Privacy &
+Security → Open Anyway**). It updates itself like the Windows build.
+
 ## Quick start (local)
 
 Requires Python 3.12+ and Node 20+.
