@@ -42,6 +42,8 @@ jobs:
       channel: ${{ steps.plan.outputs.channel }}
       version: ${{ steps.plan.outputs.version }}
       publish: ${{ steps.plan.outputs.publish }}
+      suffix: ${{ steps.plan.outputs.suffix }}
+      packid: ${{ steps.plan.outputs.packid }}
     environment: ${{ inputs.release == 'stable' && 'production' || 'test' }}
     defaults:
       run:
@@ -295,13 +297,20 @@ jobs:
           if ($build -notlike "$new *") { throw "After closing, the installed version is '$build', expected $new" }
           "Update test passed: $($prev.tag_name) updated itself to $build"
 
-  # The same test build for macOS (Apple Silicon), added to the same GitHub release on its own update
-  # channel ("osx-test"), so a Mac with the test build updates itself like the Windows test PCs.
+  # The same build for macOS (Apple Silicon), added to the same GitHub release on its own update channel
+  # ("osx-test" or "osx-stable"), so a Mac updates itself like the Windows PCs of that channel.
   mac:
     needs: build
-    if: needs.build.outputs.publish == 'true' && needs.build.outputs.channel == 'test'
+    if: needs.build.outputs.publish == 'true'
     runs-on: macos-latest
-    environment: test
+    environment: ${{ needs.build.outputs.channel == 'stable' && 'production' || 'test' }}
+    env:
+      CHANNEL: ${{ needs.build.outputs.channel }}
+      MAC_CHANNEL: osx-${{ needs.build.outputs.channel }}
+      PACKID: ${{ needs.build.outputs.packid }}
+      VERSION: ${{ needs.build.outputs.version }}
+      LICENSE_URL: ${{ vars[format('LICENSE_URL_{0}', needs.build.outputs.suffix)] }}
+      LICENSE_KEY: ${{ vars[format('LICENSE_PUBLIC_KEY_{0}', needs.build.outputs.suffix)] }}
     steps:
       - uses: actions/checkout@v4
 
@@ -340,8 +349,8 @@ jobs:
 
       - name: Prepare build configuration
         run: |
-          python desktop/prepare_build.py --channel test --version "${{ needs.build.outputs.version }}" \
-            --license-url "${{ vars.LICENSE_URL_TEST }}" --license-public-key "${{ vars.LICENSE_PUBLIC_KEY_TEST }}" \
+          python desktop/prepare_build.py --channel "$CHANNEL" --version "$VERSION" \
+            --license-url "$LICENSE_URL" --license-public-key "$LICENSE_KEY" \
             --update-repo "${{ github.server_url }}/${{ github.repository }}"
 
       - name: Package with PyInstaller
@@ -361,9 +370,9 @@ jobs:
 
       - name: Create installer and update packages
         run: |
-          vpk pack --packId CopilotAppTest --packVersion "${{ needs.build.outputs.version }}" \
+          vpk pack --packId "$PACKID" --packVersion "$VERSION" \
             --packDir dist/Copilot.app --mainExe Copilot --packTitle "Copilot" --packAuthors "Copilot" \
-            --icon desktop/assets/copilot.icns --channel osx-test --outputDir Releases-mac
+            --icon desktop/assets/copilot.icns --channel "$MAC_CHANNEL" --outputDir Releases-mac
           ls -la Releases-mac
 
       - name: Keep the installer as a build artifact
@@ -376,5 +385,5 @@ jobs:
       - name: Add to the GitHub release
         run: |
           vpk upload github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
-            --outputDir Releases-mac --channel osx-test --merge --publish --pre \
+            --outputDir Releases-mac --channel "$MAC_CHANNEL" --merge --publish $([ "$CHANNEL" = test ] && echo --pre) \
             --releaseName "Copilot ${{ needs.build.outputs.version }}" --tag "v${{ needs.build.outputs.version }}"
