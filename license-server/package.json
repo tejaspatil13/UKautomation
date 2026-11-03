@@ -8,6 +8,9 @@
     "db:init:local": "wrangler d1 execute copilot-license-test --env test --local --file schema.sql",
     "db:init:test": "wrangler d1 execute copilot-license-test --env test --remote --file schema.sql",
     "db:init:production": "wrangler d1 execute copilot-license --env production --remote --file schema.sql",
+    "db:migrate:local": "wrangler d1 execute copilot-license-test --env test --local --file migrations/0002_downloads.sql",
+    "db:migrate:test": "wrangler d1 execute copilot-license-test --env test --remote --file migrations/0002_downloads.sql",
+    "db:migrate:production": "wrangler d1 execute copilot-license --env production --remote --file migrations/0002_downloads.sql",
     "deploy:test": "wrangler deploy --env test",
     "deploy:production": "wrangler deploy --env production"
   },

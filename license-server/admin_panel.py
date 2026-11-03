@@ -23,7 +23,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 HERE = Path(__file__).resolve().parent
 SECRETS = Path.home() / ".copilot-license" / "secrets.env"
 ENVS = ("test", "production")
-ACTIONS = {"trial_minutes", "extend_hours", "set_expiry", "expire", "paid", "revoke", "unrevoke", "reset", "note"}
+ACTIONS = {"trial_minutes", "extend_hours", "set_expiry", "expire", "paid", "revoke", "unrevoke", "reset", "note",
+           "set_limits", "reset_downloads"}
 
 
 def load_secrets() -> dict[str, str]:
@@ -88,6 +89,12 @@ def build_app(session: str, port_ref: dict, seen: dict | None = None) -> FastAPI
     @app.get("/api/{env}/devices")
     def devices(env: str):
         return call(env, "GET", "/admin/licenses")
+
+    @app.get("/api/{env}/devices/{machine}/downloads")
+    def history(env: str, machine: str):
+        if not (len(machine) == 64 and all(c in "0123456789abcdef" for c in machine)):
+            return JSONResponse({"error": "bad request"}, 400)
+        return call(env, "GET", f"/admin/licenses/{machine}/downloads")
 
     @app.post("/api/{env}/devices/{machine}")
     async def act(env: str, machine: str, request: Request):

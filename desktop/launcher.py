@@ -130,6 +130,8 @@ def run_app(cfg: BuildConfig, paths: Paths, instance: SingleInstance, debug: boo
             w.load_url(base["url"] + "/desktop/")
 
     lic = license_manager(cfg, paths, on_license_change)
+    if lic.client is not None:  # every Excel download is recorded with the licence server (row limits)
+        app.main.app.state.download_guard = lic.client.record_download
     upd = updater.Updater(cfg.update_repo, cfg.channel)
     restart = threading.Event()
     state = DesktopState(cfg.version, cfg.channel, lic, paths.logs, upd, focus_secret=instance.focus_secret)

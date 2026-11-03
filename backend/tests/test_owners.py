@@ -388,3 +388,35 @@ def test_names_and_dates_are_tidied():
     assert _person_name("Mr Timothy Godsmark") == "Mr Timothy Godsmark"
     assert nice_date("1 March 2009") == nice_date("2009-03-01") == "1 Mar 2009"
     assert nice_date("sometime") == "sometime"
+
+
+def test_excel_downloads_ask_the_download_guard(make_client, monkeypatch):
+    """The desktop app records each Excel download with its licence server, which may refuse it (row limits)."""
+    calls = []
+
+    def guard(kind, keys, filename):
+        calls.append((kind, len(keys), filename))
+        return "Only 0 of your 200 Potential customers rows are left." if kind == "customers" else None
+
+    with make_client(FakeProvider({"300675222": [GW]})) as client:
+        client.app.state.owners.client = fake_companies_house([])
+        monkeypatch.setattr(client.app.state, "download_guard", guard, raising=False)  # undone after the test
+        job = wait(client, client.post("/api/jobs", json={"postcode": "CV1 1FJ"}).json()["id"])
+        assert client.get(f"/api/jobs/{job['id']}/download", params={"filename": "Coventry"}).status_code == 200
+        client.post("/api/sheet/add", json={"employee": "Sara", "job_id": job["id"]})
+        assert client.post("/api/sheet/download", json={"employee": "Sara", "filename": "Mine"}).status_code == 200
+        client.post("/api/owners/run", json={"employee": "Sara"})
+        deadline = time.time() + 5
+        while client.get("/api/owners/status", params={"employee": "Sara"}).json()["running"]:
+            assert time.time() < deadline
+            time.sleep(0.02)
+        r = client.post("/api/owners/download", json={"employee": "Sara", "filename": "Leads"})
+        assert r.status_code == 403 and r.json()["detail"] == ["Only 0 of your 200 Potential customers rows are left."]
+    assert calls == [("search", 1, "Coventry.xlsx"), ("sheet", 1, "Mine.xlsx"), ("customers", 1, "Leads.xlsx")]
+
+
+def test_web_deployment_has_no_download_guard(make_client):
+    with make_client(FakeProvider({"300675222": [GW]})) as client:
+        assert getattr(client.app.state, "download_guard", None) is None
+        job = wait(client, client.post("/api/jobs", json={"postcode": "CV1 1FJ"}).json()["id"])
+        assert client.get(f"/api/jobs/{job['id']}/download").status_code == 200

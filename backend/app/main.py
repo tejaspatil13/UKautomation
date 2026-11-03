@@ -251,14 +251,27 @@ async def retry_job(job_id: str, request: Request):
     return _jobs(request).retry(job_id)
 
 
+async def _allow_download(request: Request, kind: str, rows: list, filename: str) -> None:
+    """The desktop app records every Excel download with its licence server, which may refuse it once a
+    PC has used its row allowance. The web deployment sets no download_guard: nothing changes there."""
+    guard = getattr(request.app.state, "download_guard", None)
+    if guard is not None:
+        refused = await asyncio.to_thread(guard, kind, [r.key for r in rows], filename)
+        if refused:
+            raise HTTPException(403, detail=[refused])
+
+
 @app.get("/api/jobs/{job_id}/download")
-def download(job_id: str, request: Request, filename: str | None = Query(None, max_length=120)):
-    _job_or_404(request, job_id)
+async def download(job_id: str, request: Request, filename: str | None = Query(None, max_length=120)):
+    status = _job_or_404(request, job_id)
     found = _jobs(request).export(job_id)
     if not found:
         raise HTTPException(404, detail=["No spreadsheet is available for this search."])
     path, default_name = found
-    return FileResponse(path, filename=clean_filename(filename, default_name), media_type=XLSX)
+    name = clean_filename(filename, default_name)
+    leads = [r for r in _jobs(request).records(job_id) if r.is_lead]  # the rows in the file
+    await _allow_download(request, "search", group_records(leads, status.label), name)
+    return FileResponse(path, filename=name, media_type=XLSX)
 
 
 # ---------- My sheet ----------
@@ -398,6 +411,8 @@ async def download_sheet(body: SheetDownload, request: Request, background: Back
     if not rows:
         raise HTTPException(404, detail=["There are no rows to download."])
     now = datetime.now(UK_TZ)
+    await _allow_download(request, "sheet", rows,
+                          clean_filename(body.filename, f"{body.employee} - My sheet - {now:%d %b %Y}.xlsx"))
     about = [
         ("Employee", body.employee),
         ("Generated", now.strftime("%d %b %Y %H:%M %Z")),
@@ -452,6 +467,8 @@ async def download_customers(body: CustomerDownload, request: Request, backgroun
     if not rows:
         raise HTTPException(404, detail=["There are no rows to download."])
     now = datetime.now(UK_TZ)
+    await _allow_download(request, "customers", rows,
+                          clean_filename(body.filename, f"{body.employee} - Potential customers - {now:%d %b %Y}.xlsx"))
     about = [
         ("Employee", body.employee),
         ("Generated", now.strftime("%d %b %Y %H:%M %Z")),

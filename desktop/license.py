@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 CHECK_EVERY_S = {"stable": 60, "test": 60}  # an admin change (stop, paid, block) reaches a running PC within a minute
 CLOCK_SLACK_S = 10 * 60  # small differences between this PC's clock and the server's are normal
 BUILD_MACHINE = "GitHub build machine"
+DOWNLOAD_KINDS = {"search": "search result", "sheet": "My sheet", "customers": "Potential customers"}
 CONTACT = "Please contact the developer, Tejas Patil, on 7709288629."
 
 
@@ -170,6 +171,35 @@ class LicenseClient:
         state = evaluate(payload, now)
         state.checked_online_at = saved.get("checked_at")
         return state
+
+    # ---------- Excel downloads ----------
+    def record_download(self, kind: str, row_keys: list[str], filename: str) -> str | None:
+        """Ask the licence server to record an Excel download. None = go ahead; otherwise the message to
+        show. The server counts rows this PC hasn't downloaded before against its limit for that kind.
+        Only a hash of each row is sent, never the business data."""
+        keys = sorted({hashlib.sha256(f"{kind}:{k}".encode()).hexdigest()[:24] for k in row_keys})
+        body = {"machine": self.machine, "kind": kind, "keys": keys, "filename": filename}
+        try:
+            r = self.http.post(f"{self.url}/v1/download", json=body, timeout=30)
+        except httpx.HTTPError as e:
+            log.warning("download not recorded (licence server unreachable: %s)", type(e).__name__)
+            return "Downloading Excel files needs an internet connection. Connect, then try again."
+        if r.status_code == 200:
+            info = r.json()
+            log.info("download recorded: %s, %s rows (%s new), %s of %s used", kind, len(keys), info.get("new_rows"),
+                     info.get("used"), info.get("limit"))
+            return None
+        info = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        if r.status_code == 403 and info.get("error") == "limit":
+            what = DOWNLOAD_KINDS.get(kind, "rows")
+            left = info.get("remaining", 0)
+            return (f"This download has {info.get('new_rows', 0):,} new {what} rows, but only {left:,} of your "
+                    f"{info.get('limit', 0):,} are left. " + (f"Choose {left:,} rows or fewer. " if left else "")
+                    + CONTACT.replace("Please contact", "For more, contact"))
+        if r.status_code == 403:
+            return f"Copilot isn't active on this computer, so files can't be downloaded. {CONTACT}"
+        log.warning("download not recorded: licence server answered %s", r.status_code)
+        return "Copilot couldn't check your download allowance. Try again in a minute."
 
     # ---------- online ----------
     def check_online(self) -> LicenseState:

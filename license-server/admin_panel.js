@@ -18,6 +18,9 @@
   let skew = 0; // server clock minus this Mac's clock
   let loadedAt = 0;
   let showBuild = false;
+  const openHistory = new Set(); // PCs whose download history is shown
+  const historyCache = {}; // machine -> last history table, shown while it refreshes
+  const KIND = { sheet: "My sheet", customers: "Potential customers", search: "Search results" };
 
   const $ = (id) => document.getElementById(id);
   function el(tag, cls, text) {
@@ -144,11 +147,78 @@
       !permanent && end <= nowS());
     add("Forget", "quiet", () => act(pc, { action: "reset" }, "forgotten",
       "Forget this PC? Its next start begins a NEW 2-day trial. Use this only for test PCs."));
+    add(openHistory.has(pc.machine) ? "Hide downloads" : "Download history", "quiet", () => {
+      openHistory.has(pc.machine) ? openHistory.delete(pc.machine) : openHistory.add(pc.machine);
+      render();
+    });
+    add("Change limits…", "quiet", () => changeLimits(pc));
+    add("Reset downloads", "quiet", () => act(pc, { action: "reset_downloads" }, "download counts reset",
+      "Reset this PC's download counts to zero? Its full limits become available again (the history is kept)."));
     add("Rename", "quiet", () => {
       const name = prompt("Name for this PC (e.g. \"Client: ACME Ltd\", \"Tejas Windows PC\")", pc.note || "");
       if (name != null) act(pc, { action: "note", note: name.trim() }, "renamed");
     });
     return row;
+  }
+
+  // ---------- Excel downloads ----------
+  function usageRow(pc) {
+    const row = el("div", "usage");
+    row.append(el("span", "", "Downloads:"));
+    for (const kind of ["sheet", "customers", "search"]) {
+      const d = (pc.downloads || {})[kind] || { used: 0, limit: -1 };
+      const item = el("span");
+      item.append(document.createTextNode(`${KIND[kind]} `));
+      item.append(el("b", "", d.limit < 0 ? `${d.used.toLocaleString()} rows (no limit)`
+        : `${d.used.toLocaleString()} / ${d.limit.toLocaleString()} rows`));
+      if (d.limit >= 0) {
+        const m = el("span", `meter${d.used >= d.limit ? " full" : ""}`);
+        const fill = el("i");
+        fill.style.width = `${d.limit ? Math.min(100, (100 * d.used) / d.limit) : 100}%`;
+        m.append(fill);
+        item.append(m);
+      }
+      row.append(item);
+    }
+    return row;
+  }
+
+  function historyBox(pc) {
+    const box = el("div", "history");
+    box.append(historyCache[pc.machine] || el("div", "small", "Loading…"));
+    api(`/api/${env}/devices/${pc.machine}/downloads`).then((j) => {
+      if (!j.downloads.length) { box.replaceChildren(el("div", "empty", "No Excel files downloaded yet.")); return; }
+      const t = el("table");
+      const head = el("tr");
+      for (const [h, cls] of [["When", ""], ["What", ""], ["File name", ""], ["Rows", "num"], ["New rows", "num"], ["", ""]]) head.append(el("th", cls, h));
+      t.append(head);
+      for (const d of j.downloads) {
+        const tr = el("tr", d.allowed ? "" : "refused");
+        tr.append(el("td", "", date(d.at)), el("td", "", KIND[d.kind] || d.kind), el("td", "", d.filename || "–"),
+          el("td", "num", d.rows.toLocaleString()), el("td", "num", d.new_rows.toLocaleString()),
+          el("td", "", d.allowed ? "" : "Refused: over the limit"));
+        t.append(tr);
+      }
+      historyCache[pc.machine] = t;
+      box.replaceChildren(t);
+    }).catch((e) => box.replaceChildren(el("div", "error", e.message)));
+    return box;
+  }
+
+  function changeLimits(pc) {
+    const asked = {};
+    for (const kind of ["sheet", "customers", "search"]) {
+      const d = (pc.downloads || {})[kind] || { limit: -1 };
+      const v = prompt(`${KIND[kind]}: how many rows may ${pc.note || "this PC"} download in total?\n\n` +
+        "Enter a number, \"none\" for no limit, or leave empty for the default.", d.limit < 0 ? "none" : String(d.limit));
+      if (v == null) return; // cancelled
+      const t = v.trim().toLowerCase();
+      if (t === "") asked[kind] = null;
+      else if (t === "none") asked[kind] = -1;
+      else if (/^\d+$/.test(t)) asked[kind] = Number(t);
+      else { toast(`"${v}" isn't a number of rows.`); return; }
+    }
+    act(pc, { action: "set_limits", limits: asked }, "download limits changed");
   }
 
   // ---------- drawing ----------
@@ -208,7 +278,7 @@
       );
       const lb = leftBox(pc);
       tickLeft(lb, pc);
-      card.append(head, lb, meta);
+      card.append(head, lb, meta, usageRow(pc));
       const ended = pc.expires_at != null && pc.expires_at <= nowS();
       if (pc.revoked || ended) {
         card.append(el("div", "hint", pc.revoked && ended
@@ -218,6 +288,7 @@
             : "Ended. To let this PC use Copilot again: + 1 day, Set time left, Restart 2-day trial or Mark as paid."));
       }
       card.append(buttons(pc));
+      if (openHistory.has(pc.machine)) card.append(historyBox(pc));
       return card;
     });
     box.replaceChildren(...cards);

@@ -9,8 +9,28 @@ CREATE TABLE IF NOT EXISTS licenses (
     last_seen_at INTEGER,
     last_version TEXT,
     checks INTEGER NOT NULL DEFAULT 0,
-    note TEXT NOT NULL DEFAULT ''
+    note TEXT NOT NULL DEFAULT '',
+    limits TEXT                                  -- JSON row limits per download kind; missing = the defaults
 );
+-- Every Excel download (and refused attempt) from the app.
+CREATE TABLE IF NOT EXISTS downloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    machine TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    kind TEXT NOT NULL,                          -- 'search', 'sheet' or 'customers'
+    rows INTEGER NOT NULL,                       -- rows in the file
+    new_rows INTEGER NOT NULL,                   -- rows this PC had not downloaded before (count towards the limit)
+    filename TEXT NOT NULL DEFAULT '',
+    allowed INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_downloads_machine ON downloads(machine, at);
+-- Which rows each PC has downloaded: a hash per row, never the business data itself.
+CREATE TABLE IF NOT EXISTS download_keys (
+    machine TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    PRIMARY KEY (machine, kind, key)
+) WITHOUT ROWID;
 -- Every administrator change, for the record.
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

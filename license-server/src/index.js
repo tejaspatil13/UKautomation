@@ -1,6 +1,7 @@
 // Copilot licence server (Cloudflare Worker + D1).
 //
 // POST /v1/license            the app: activate (first time) or check; returns a signed token
+// POST /v1/download           the app: record an Excel download; refused past the PC's row limit
 // GET  /health                is the server up, which environment
 // /admin/...                  the administrator (Authorization: Bearer ADMIN_TOKEN), see admin() below
 //
@@ -13,12 +14,20 @@ const TRIAL_OFFLINE_SECONDS = 24 * 3600; // a trial must check in at least daily
 const PAID_OFFLINE_SECONDS = 14 * 24 * 3600;
 const MIN_SECONDS_BETWEEN_CHECKS = 2; // per machine: stops a stuck client hammering the server
 const MACHINE = /^[0-9a-f]{64}$/;
+// Rows each PC may download in total, per kind of Excel file (-1 = no limit). Only rows it hasn't
+// downloaded before count, so downloading the same rows again is free. Change per PC with set_limits.
+const DEFAULT_LIMITS = { search: -1, sheet: 2000, customers: 200 };
+const KINDS = Object.keys(DEFAULT_LIMITS);
+const ROW_KEY = /^[0-9a-f]{16,64}$/; // the app sends a hash of each row, never the business data
+const MAX_KEYS = 20000;
+const CHUNK = 1000;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
       if (request.method === "POST" && url.pathname === "/v1/license") return await license(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/download") return await download(request, env);
       if (url.pathname.startsWith("/admin/")) return await admin(request, env, url);
       if (url.pathname === "/health") return json({ ok: true, env: env.ENVIRONMENT });
       return json({ error: "not_found" }, 404);
@@ -75,6 +84,75 @@ async function license(request, env) {
   return json({ token: await sign(env, payloadFor(env, row, t)) });
 }
 
+// ---------- Excel downloads ----------
+function limitsOf(row) {
+  let own = {};
+  try {
+    own = JSON.parse(row.limits || "{}") || {};
+  } catch {
+    own = {};
+  }
+  return { ...DEFAULT_LIMITS, ...own };
+}
+
+async function usageOf(env, machine) {
+  const { results } = await env.DB.prepare("SELECT kind, COUNT(*) AS n FROM download_keys WHERE machine = ? GROUP BY kind")
+    .bind(machine).all();
+  const used = Object.fromEntries(KINDS.map((k) => [k, 0]));
+  for (const r of results) used[r.kind] = Number(r.n);
+  return used;
+}
+
+function chunks(list) {
+  const out = [];
+  for (let i = 0; i < list.length; i += CHUNK) out.push(list.slice(i, i + CHUNK));
+  return out;
+}
+
+async function download(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "bad_request" }, 400);
+  }
+  const machine = String(body.machine || "");
+  const kind = String(body.kind || "");
+  const keys = [...new Set(Array.isArray(body.keys) ? body.keys.map(String) : [])];
+  const filename = String(body.filename || "").slice(0, 120);
+  if (!MACHINE.test(machine) || !KINDS.includes(kind) || keys.length > MAX_KEYS || !keys.every((k) => ROW_KEY.test(k))) {
+    return json({ error: "bad_request" }, 400);
+  }
+  const t = now();
+  const row = await env.DB.prepare("SELECT * FROM licenses WHERE machine = ?").bind(machine).first();
+  if (!row || payloadFor(env, row, t).status !== "active") return json({ error: "licence" }, 403);
+
+  let fresh = 0; // rows this PC hasn't downloaded before
+  for (const part of chunks(keys)) {
+    const r = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM json_each(?1) j WHERE NOT EXISTS " +
+        "(SELECT 1 FROM download_keys d WHERE d.machine = ?2 AND d.kind = ?3 AND d.key = j.value)",
+    ).bind(JSON.stringify(part), machine, kind).first();
+    fresh += Number(r.n);
+  }
+  const limit = limitsOf(row)[kind];
+  const used = (await usageOf(env, machine))[kind];
+  const record = (allowed) => env.DB.prepare(
+    "INSERT INTO downloads (machine, at, kind, rows, new_rows, filename, allowed) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).bind(machine, t, kind, keys.length, fresh, filename, allowed ? 1 : 0).run();
+
+  if (limit >= 0 && used + fresh > limit) {
+    await record(false);
+    return json({ error: "limit", kind, used, limit, remaining: Math.max(0, limit - used), new_rows: fresh }, 403);
+  }
+  for (const part of chunks(keys)) {
+    await env.DB.prepare("INSERT OR IGNORE INTO download_keys (machine, kind, key) SELECT ?2, ?3, value FROM json_each(?1)")
+      .bind(JSON.stringify(part), machine, kind).run();
+  }
+  await record(true);
+  return json({ ok: true, kind, used: used + fresh, limit, remaining: limit < 0 ? null : limit - used - fresh, new_rows: fresh });
+}
+
 function payloadFor(env, row, t) {
   const expires = row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at);
   let status = "active";
@@ -121,18 +199,31 @@ async function sign(env, payload) {
 //        revoke / unrevoke         turn access off / back on
 //        reset                     forget this computer: its next start begins a new trial
 //        note          {note}      free-text note (client name, invoice ...)
+//        set_limits    {limits: {search|sheet|customers: rows, -1 = no limit, null = default}}
+//        reset_downloads {kind?}   forget what this PC has downloaded (all kinds, or one): its limits start again
+//   GET  /admin/licenses/<machine>/downloads   its Excel downloads, newest first
 async function admin(request, env, url) {
   if (!(await authorised(request, env))) return json({ error: "unauthorised" }, 401);
-  const m = url.pathname.match(/^\/admin\/licenses(?:\/([0-9a-f]{64}))?$/);
+  const m = url.pathname.match(/^\/admin\/licenses(?:\/([0-9a-f]{64})(\/downloads)?)?$/);
   if (!m) return json({ error: "not_found" }, 404);
   const machine = m[1];
   if (!machine) {
     if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
     const { results } = await env.DB.prepare("SELECT * FROM licenses ORDER BY created_at DESC").all();
-    return json({ env: env.ENVIRONMENT, now: now(), licenses: results.map(describe) });
+    const counts = (await env.DB.prepare("SELECT machine, kind, COUNT(*) AS n FROM download_keys GROUP BY machine, kind").all()).results;
+    const used = {};
+    for (const c of counts) (used[c.machine] ||= {})[c.kind] = Number(c.n);
+    return json({ env: env.ENVIRONMENT, now: now(), defaults: DEFAULT_LIMITS,
+      licenses: results.map((r) => describe(r, used[r.machine])) });
+  }
+  if (m[2]) {
+    if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+    const { results } = await env.DB.prepare("SELECT at, kind, rows, new_rows, filename, allowed FROM downloads " +
+      "WHERE machine = ? ORDER BY at DESC, id DESC LIMIT 500").bind(machine).all();
+    return json({ env: env.ENVIRONMENT, now: now(), downloads: results });
   }
   const row = await env.DB.prepare("SELECT * FROM licenses WHERE machine = ?").bind(machine).first();
-  if (request.method === "GET") return row ? json({ env: env.ENVIRONMENT, now: now(), license: describe(row) }) : json({ error: "not_found" }, 404);
+  if (request.method === "GET") return row ? json({ env: env.ENVIRONMENT, now: now(), license: describe(row, await usageOf(env, machine)) }) : json({ error: "not_found" }, 404);
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   if (!row) return json({ error: "not_found" }, 404);
 
@@ -185,7 +276,36 @@ async function admin(request, env, url) {
     case "unrevoke":
       await set("revoked = 0");
       break;
+    case "set_limits": {
+      const given = body.limits && typeof body.limits === "object" ? body.limits : null;
+      if (!given) return json({ error: "limits required" }, 400);
+      let own = {};
+      try {
+        own = JSON.parse(row.limits || "{}") || {};
+      } catch {
+        own = {};
+      }
+      for (const [k, v] of Object.entries(given)) {
+        if (!KINDS.includes(k)) return json({ error: `unknown kind ${k}` }, 400);
+        if (v === null) delete own[k];
+        else if (Number.isInteger(v) && v >= -1) own[k] = v;
+        else return json({ error: `bad limit for ${k}` }, 400);
+      }
+      await set("limits = ?", Object.keys(own).length ? JSON.stringify(own) : null);
+      detail = JSON.stringify(given);
+      break;
+    }
+    case "reset_downloads": {
+      const kind = body.kind ? String(body.kind) : "";
+      if (kind && !KINDS.includes(kind)) return json({ error: `unknown kind ${kind}` }, 400);
+      if (kind) await env.DB.prepare("DELETE FROM download_keys WHERE machine = ? AND kind = ?").bind(machine, kind).run();
+      else await env.DB.prepare("DELETE FROM download_keys WHERE machine = ?").bind(machine).run();
+      detail = kind || "all";
+      break;
+    }
     case "reset":
+      await env.DB.prepare("DELETE FROM download_keys WHERE machine = ?").bind(machine).run();
+      await env.DB.prepare("DELETE FROM downloads WHERE machine = ?").bind(machine).run();
       await env.DB.prepare("DELETE FROM licenses WHERE machine = ?").bind(machine).run();
       await audit(env, machine, "reset", "");
       return json({ env: env.ENVIRONMENT, reset: machine });
@@ -198,12 +318,15 @@ async function admin(request, env, url) {
   }
   await audit(env, machine, body.action, detail);
   const updated = await env.DB.prepare("SELECT * FROM licenses WHERE machine = ?").bind(machine).first();
-  return json({ env: env.ENVIRONMENT, now: now(), license: describe(updated) });
+  return json({ env: env.ENVIRONMENT, now: now(), license: describe(updated, await usageOf(env, machine)) });
 }
 
-function describe(row) {
+function describe(row, used = {}) {
   const p = payloadFor({ ENVIRONMENT: "" }, row, now());
-  return { ...row, status: p.status, seconds_left: row.expires_at === null ? null : Math.max(0, row.expires_at - now()) };
+  const limits = limitsOf(row);
+  const downloads = Object.fromEntries(KINDS.map((k) => [k, { used: used[k] || 0, limit: limits[k] }]));
+  return { ...row, limits: undefined, downloads, status: p.status,
+    seconds_left: row.expires_at === null ? null : Math.max(0, row.expires_at - now()) };
 }
 
 async function authorised(request, env) {

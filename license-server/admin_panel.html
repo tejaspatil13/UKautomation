@@ -47,6 +47,17 @@
   .left.warn strong { color: var(--amber); }
   .left.over strong { color: var(--red); }
   .hint { grid-column: 1 / -1; font-size: 13px; color: var(--amber); background: var(--amber-soft); padding: 6px 10px; border-radius: 6px; }
+  .usage { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; font-size: 13px; color: var(--text-2); }
+  .usage b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+  .meter { display: inline-block; width: 70px; height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; vertical-align: middle; margin-left: 6px; }
+  .meter i { display: block; height: 100%; background: var(--accent); }
+  .meter.full i { background: var(--red); }
+  .history { grid-column: 1 / -1; border: 1px solid var(--line-soft); border-radius: 8px; max-height: 280px; overflow: auto; }
+  .history table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .history th { position: sticky; top: 0; background: #fafbfc; text-align: left; font-weight: 500; color: var(--text-2); padding: 6px 10px; }
+  .history td { padding: 6px 10px; border-top: 1px solid var(--line-soft); }
+  .history td.num, .history th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .history tr.refused td { color: var(--red); }
   .meta { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px 18px; }
   .actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line-soft); margin-top: 4px; }
   .actions .gap { flex: 1; }
