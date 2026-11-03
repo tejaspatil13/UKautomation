@@ -54,6 +54,7 @@ async function license(request, env) {
   }
   const machine = String(body.machine || "");
   const version = String(body.version || "").slice(0, 40);
+  const label = String(body.label || "").slice(0, 60); // e.g. "GitHub build machine": the first note, if any
   if (!MACHINE.test(machine)) return json({ error: "bad_request" }, 400);
 
   const t = now();
@@ -61,9 +62,9 @@ async function license(request, env) {
   if (!row) {
     // First activation of this computer: the trial starts now, on the server's clock.
     await env.DB.prepare(
-      "INSERT INTO licenses (machine, plan, revoked, trial_started_at, expires_at, created_at, last_seen_at, last_version, checks) " +
-        "VALUES (?, 'trial', 0, ?, ?, ?, ?, ?, 1) ON CONFLICT(machine) DO NOTHING",
-    ).bind(machine, t, t + trialSeconds(env), t, t, version).run();
+      "INSERT INTO licenses (machine, plan, revoked, trial_started_at, expires_at, created_at, last_seen_at, last_version, checks, note) " +
+        "VALUES (?, 'trial', 0, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT(machine) DO NOTHING",
+    ).bind(machine, t, t + trialSeconds(env), t, t, version, label).run();
     await audit(env, machine, "trial_started", `${trialSeconds(env)} seconds`);
     row = await env.DB.prepare("SELECT * FROM licenses WHERE machine = ?").bind(machine).first();
   } else {

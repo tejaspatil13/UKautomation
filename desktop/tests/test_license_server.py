@@ -20,7 +20,10 @@ pytestmark = pytest.mark.skipif(not (URL and PUB and ADMIN), reason="local licen
 
 @pytest.fixture
 def machine():
-    return secrets.token_hex(32)  # a fresh "computer" per test
+    m = secrets.token_hex(32)  # a fresh "computer" per test
+    yield m
+    # Forget it afterwards, so test runs don't fill the admin panel with pretend PCs.
+    httpx.post(f"{URL}/admin/licenses/{m}", json={"action": "reset"}, headers={"Authorization": f"Bearer {ADMIN}"})
 
 
 def app_client(tmp_path, machine, url=None):

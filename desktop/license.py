@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -28,8 +29,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 log = logging.getLogger(__name__)
 
-CHECK_EVERY_S = {"stable": 5 * 60, "test": 60}  # how soon an admin change (expire, paid, revoke) shows
+CHECK_EVERY_S = {"stable": 60, "test": 60}  # an admin change (stop, paid, block) reaches a running PC within a minute
 CLOCK_SLACK_S = 10 * 60  # small differences between this PC's clock and the server's are normal
+BUILD_MACHINE = "GitHub build machine"
 CONTACT = "Please contact the developer, Tejas Patil, on 7709288629."
 
 
@@ -173,7 +175,10 @@ class LicenseClient:
     def check_online(self) -> LicenseState:
         """Ask the server. Falls back to the saved token when the server can't be reached."""
         try:
-            r = self.http.post(f"{self.url}/v1/license", json={"machine": self.machine, "version": self.version})
+            body = {"machine": self.machine, "version": self.version}
+            if os.environ.get("GITHUB_ACTIONS") == "true":  # CI's test runs: named so the admin panel can hide them
+                body["label"] = BUILD_MACHINE
+            r = self.http.post(f"{self.url}/v1/license", json=body)
         except httpx.TransportError as e:
             log.warning("licence server unreachable: %s", type(e).__name__)
             return self._fallback("offline")
