@@ -140,10 +140,34 @@ def test_update_restart_waits_for_running_work(make):
     with client:
         login(client, state)
         r = client.post("/desktop/update/restart")
-        assert r.status_code == 409 and "still running" in r.json()["detail"][0]
+        assert r.status_code == 409 and "still running" in r.json()["detail"][0] and r.json()["busy"]
+        assert restarted == []
+        # The user confirmed "Restart anyway": the data download starts again after the update.
+        assert client.post("/desktop/update/restart", json={"force": True}).status_code == 202
         busy_dataset.updating = False
         assert client.post("/desktop/update/restart").status_code == 202
-        assert restarted == [True]
+        assert restarted == [True, True]
+
+
+def test_check_for_app_updates_button(make):
+    import threading
+
+    checked = threading.Event()
+    updater = SimpleNamespace(enabled=True, status="idle", as_dict=lambda: {"status": "idle"},
+                              check_and_download=checked.set)
+    client, state = make(updater=updater)
+    with client:
+        login(client, state)
+        assert client.post("/desktop/update/check").status_code == 202
+        assert checked.wait(5)
+
+
+def test_check_for_app_updates_from_source_explains(make):
+    client, state = make()  # no updater: running from source
+    with client:
+        login(client, state)
+        r = client.post("/desktop/update/check")
+        assert r.status_code == 409 and "installed Copilot app" in r.json()["detail"][0]
 
 
 def test_focus_needs_the_instance_secret(make):

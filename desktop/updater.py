@@ -34,7 +34,9 @@ class Updater:
         self.version = ""  # version ready to install
         self.progress = 0
         self.error = ""
+        self.checked_at = 0.0  # last finished check (time.time()), shown as "You have the latest version"
         self._pending = None
+        self._lock = threading.Lock()  # the background check and the "Check for app updates" button
         self._um = None
         self._stop = threading.Event()
         self._every = CHECK_EVERY_S.get(channel, 4 * 3600)
@@ -57,11 +59,12 @@ class Updater:
         return self._um is not None
 
     def as_dict(self) -> dict:
-        return {"status": self.status, "version": self.version, "progress": self.progress, "error": self.error}
+        return {"status": self.status, "version": self.version, "progress": self.progress, "error": self.error,
+                "checked_at": self.checked_at}
 
     def check_and_download(self) -> None:
-        if not self.enabled or self.status in ("checking", "downloading", "ready"):
-            return
+        if not self.enabled or self.status == "ready" or not self._lock.acquire(blocking=False):
+            return  # nothing to do, or a check is already running
         try:
             self.status, self.error = "checking", ""
             info = self._um.check_for_updates()
@@ -75,7 +78,10 @@ class Updater:
             log.info("update %s downloaded; installs on restart", self.version)
         except Exception as e:  # offline, GitHub rate limit, bad package: try again later, keep running
             log.warning("update check failed: %s", e)
-            self.status, self.error = "error", "Couldn't check for updates."
+            self.status, self.error = "error", "Couldn't check for updates. Check the internet connection."
+        finally:
+            self.checked_at = time.time()
+            self._lock.release()
 
     def _on_progress(self, *args) -> None:
         try:  # display only: never let an unexpected callback value stop the download

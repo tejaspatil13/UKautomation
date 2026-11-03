@@ -146,14 +146,27 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
         return Response(logs.diagnostics_zip(state.log_dir), media_type="application/zip",
                         headers={"Content-Disposition": 'attachment; filename="Copilot diagnostics.zip"'})
 
+    @outer.post("/desktop/update/check")
+    def check_for_update():
+        """The "Check for app updates" button: check now instead of waiting for the next automatic check."""
+        updater = state.updater
+        if not updater or not getattr(updater, "enabled", False):
+            return JSONResponse({"detail": ["App updates work in the installed Copilot app."]}, status_code=409)
+        threading.Thread(target=updater.check_and_download, name="update-check", daemon=True).start()
+        return Response(status_code=202)
+
     @outer.post("/desktop/update/restart")
-    def restart_to_update():
+    async def restart_to_update(request: Request):
         updater = state.updater
         if not updater or getattr(updater, "status", "") != "ready":
             return JSONResponse({"detail": ["No update is ready to install."]}, status_code=409)
-        if _busy(main_app):
-            return JSONResponse({"detail": ["A search or data download is still running. Restart when it has "
-                                            "finished, or the update installs next time you close Copilot."]},
+        try:
+            force = bool((await request.json()).get("force"))
+        except ValueError:
+            force = False
+        if _busy(main_app) and not force:  # the user is asked first: a data download starts again after
+            return JSONResponse({"detail": ["A search or data download is still running. If you restart now, it "
+                                            "starts again from the beginning after the update."], "busy": True},
                                 status_code=409)
         if state.on_restart_to_update:
             state.on_restart_to_update()
