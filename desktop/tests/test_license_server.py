@@ -41,7 +41,7 @@ def check(c):
 def test_first_start_activates_a_trial_with_the_server_clock(tmp_path, machine):
     st = app_client(tmp_path, machine).check_online()
     assert st.kind == "active" and st.plan == "trial"
-    assert abs(st.expires_at - time.time() - 600) < 30  # test environment: TRIAL_SECONDS = 600
+    assert abs(st.expires_at - time.time() - 48 * 3600) < 30  # test environment: TRIAL_SECONDS = 172800
 
 
 @pytest.mark.parametrize("minutes", [5, 60, 2880])

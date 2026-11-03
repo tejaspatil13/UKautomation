@@ -118,7 +118,8 @@ reinstall:** paying simply means you run `paid`.
 ## Testing the trial on your Windows test PC
 
 Install the **test** build (the latest test pre-release, see the developer guide). Its first start
-creates a 10-minute trial on the **test** server. Then:
+creates a 48-hour trial on the **test** server, like production, so testers can use it normally.
+Then, to try each case on one PC:
 
 | Scenario | Command | What you should see within about a minute |
 |---|---|---|

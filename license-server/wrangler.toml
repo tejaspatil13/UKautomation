@@ -1,5 +1,5 @@
 # Two separate environments, each with its own database and its own secrets (SIGNING_KEY, ADMIN_TOKEN):
-#   test        your Windows test PC. Short trials (TRIAL_SECONDS, default 10 minutes here).
+#   test        test PCs (yours, testers'). 48-hour trials like production; shorten one PC with admin.py trial <id> <minutes>.
 #   production  the client. The trial is always exactly 48 hours (fixed in src/index.js).
 # Set up: see docs/desktop/LICENSING_GUIDE.md. database_id values come from `wrangler d1 create`.
 name = "copilot-license"
@@ -9,7 +9,7 @@ workers_dev = true
 
 [env.test]
 name = "copilot-license-test"
-vars = { ENVIRONMENT = "test", TRIAL_SECONDS = "600" }
+vars = { ENVIRONMENT = "test", TRIAL_SECONDS = "172800" }
 
 [[env.test.d1_databases]]
 binding = "DB"

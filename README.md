@@ -38,6 +38,13 @@ Why not Google? Google Search/Maps scraping is not permitted. The Places API put
 Google's services. An exported call list is very likely outside those terms. The provider interface
 (`app/contacts/base.py`) lets a licensed source be added later without touching the rest.
 
+## Download the Windows app (testers)
+
+No GitHub account is needed. Open **[Releases](https://github.com/tejaspatil13/UKautomation/releases)**,
+take the newest version at the top, and under **Assets** download `CopilotAppTest-test-Setup.exe`.
+Run it (if Windows warns you: **More info → Run anyway**). Copilot then updates itself; there is no
+need to download it again. Don't use the build files under *Actions*: those need a GitHub login.
+
 ## Quick start (local)
 
 Requires Python 3.12+ and Node 20+.
