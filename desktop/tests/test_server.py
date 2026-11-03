@@ -171,13 +171,31 @@ def test_check_for_app_updates_from_source_explains(make):
 
 
 def test_focus_needs_the_instance_secret(make):
+    import threading
+
     client, state = make()
-    focused = []
-    state.on_focus = lambda: focused.append(True)
+    focused = threading.Event()
+    state.on_focus = focused.set
     with client:
         assert client.post("/desktop/focus").status_code == 403
+        assert not focused.is_set()
         assert client.post("/desktop/focus", headers={"X-Copilot-Focus": "focus-secret"}).status_code == 204
-        assert focused == [True]
+        assert focused.wait(5)
+
+
+def test_focus_answers_at_once_even_if_the_window_is_slow(make):
+    """A second launch waits for this answer; a slow window used to make it say "Copilot is already open"."""
+    import threading
+    import time
+
+    client, state = make()
+    release = threading.Event()
+    state.on_focus = lambda: release.wait(5)  # the window takes its time
+    with client:
+        started = time.monotonic()
+        assert client.post("/desktop/focus", headers={"X-Copilot-Focus": "focus-secret"}).status_code == 204
+        assert time.monotonic() - started < 1
+    release.set()
 
 
 def test_busy_detects_running_searches():

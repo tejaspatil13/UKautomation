@@ -198,7 +198,9 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
             return Response(status_code=403)
         log.info("another launch asked this window to come to the front")
         if state.on_focus:
-            state.on_focus()
+            # Answer at once: bringing the window forward goes through the window's own thread and can be
+            # slow on a busy PC; the other launch would otherwise time out and say "already open".
+            threading.Thread(target=state.on_focus, name="focus", daemon=True).start()
         return Response(status_code=204)
 
     outer.mount("/", main_app)

@@ -54,7 +54,7 @@ class SingleInstance:
         try:
             info = json.loads(self.info_path.read_text(encoding="utf-8"))
             r = httpx.post(f"http://127.0.0.1:{info['port']}/desktop/focus",
-                           headers={"X-Copilot-Focus": info["secret"]}, timeout=3)
+                           headers={"X-Copilot-Focus": info["secret"]}, timeout=10)
             return r.status_code == 204
         except Exception as e:
             log.warning("could not reach the running copy: %s", e)
