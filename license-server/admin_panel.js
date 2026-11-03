@@ -208,7 +208,16 @@
       );
       const lb = leftBox(pc);
       tickLeft(lb, pc);
-      card.append(head, lb, meta, buttons(pc));
+      card.append(head, lb, meta);
+      const ended = pc.expires_at != null && pc.expires_at <= nowS();
+      if (pc.revoked || ended) {
+        card.append(el("div", "hint", pc.revoked && ended
+          ? "Blocked and ended. To let this PC use Copilot again: Unblock, then + 1 day, Set time left, Restart 2-day trial or Mark as paid."
+          : pc.revoked
+            ? "Blocked. Unblock to let this PC use Copilot again (its time left is unchanged)."
+            : "Ended. To let this PC use Copilot again: + 1 day, Set time left, Restart 2-day trial or Mark as paid."));
+      }
+      card.append(buttons(pc));
       return card;
     });
     box.replaceChildren(...cards);
