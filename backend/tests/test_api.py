@@ -215,3 +215,14 @@ def test_my_sheet_accumulates_searches_and_downloads_as_one_file(make_client, tm
         assert r == {"removed": 1, "total": 2}
         assert client.delete("/api/sheet", params={"employee": "Sara"}).json()["total"] == 0
         assert client.post("/api/sheet/download", json={"employee": "Sara"}).status_code == 404
+
+
+def test_interrupted_searches_resume_after_start_up_not_during_it(monkeypatch, make_client):
+    """A resumed search used to start inside start-up; a slow one stopped the desktop app opening."""
+    from app.jobs import JobManager
+
+    calls = []
+    monkeypatch.setattr(JobManager, "resume_interrupted", lambda self: calls.append("resumed"))
+    with make_client(FakeProvider({})) as client:
+        assert client.get("/api/health").status_code == 200
+        assert calls == []  # serving first; resumed 10 s later

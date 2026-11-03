@@ -52,7 +52,9 @@ async def lifespan(app: FastAPI):
     app.state.owners = OwnerFinder(settings.app_db_path, companies, LocalCompanies(settings.companies_db_path))
     asyncio.get_running_loop().run_in_executor(None, manager.voa.warm_up)  # town/postcode lists for type-ahead
     manager.cleanup_exports()
-    manager.resume_interrupted()
+    # Resume searches that were running when the app stopped, once it is serving: a long search must
+    # never hold up start-up (the desktop app gives up if its engine isn't ready within a minute).
+    asyncio.get_running_loop().call_later(10, manager.resume_interrupted)
 
     async def periodic_cleanup():
         while True:

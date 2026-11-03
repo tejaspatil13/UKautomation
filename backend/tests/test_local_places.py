@@ -71,3 +71,30 @@ async def test_provider_reopens_after_dataset_swap(provider, tmp_path):
         provider.close()
     os.replace(new, provider.db_path)
     assert [c.name for c in await provider.candidates(REC)] == ["New Tenant"]
+
+
+def test_nearby_lookup_uses_the_partial_index(tmp_path):
+    """Older SQLite (3.49 in the packaged apps) chose the postcode index for the nearby query and scanned
+    every place without a postcode: 25 s per lookup on the real data. The query names its index."""
+    from app.contacts.local_places import _NEARBY_HINTED
+
+    con = sqlite3.connect(tmp_path / "p.sqlite")
+    con.executescript(SCHEMA)
+    con.execute("CREATE INDEX ix_places_postcode ON places(postcode)")
+    con.execute("CREATE INDEX ix_places_nopc_latlon ON places(lat, lon) WHERE postcode = ''")
+    plan = " ".join(r[-1] for r in con.execute("EXPLAIN QUERY PLAN " + _NEARBY_HINTED, (0, 1, 0, 1)))
+    assert "ix_places_nopc_latlon" in plan and "ix_places_postcode" not in plan
+
+
+async def test_nearby_lookup_works_on_datasets_without_that_index(tmp_path):
+    db = tmp_path / "old.sqlite"
+    con = sqlite3.connect(db)
+    con.executescript(SCHEMA)  # imported before ix_places_nopc_latlon existed
+    con.executemany("INSERT INTO places VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+        ("a", "Card Shop", "shop", "12 Trinity St", "Coventry", "CV1 1FJ", "02476000001", "", 0.9, None, 52.4093, -1.5097, "meta"),
+        ("b", "Next Door Cafe", "cafe", "14 Trinity St", "Coventry", "", "02476000002", "", 0.9, None, 52.4094, -1.5097, "meta"),
+    ])
+    con.commit()
+    con.close()
+    names = [c.name for c in await LocalPlacesProvider(db).candidates(REC)]
+    assert names == ["Card Shop", "Next Door Cafe"]

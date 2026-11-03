@@ -16,6 +16,12 @@ from app.models import PropertyRecord
 
 NEARBY_M = 75
 _DEG_LAT_M = 111_320
+# Places with no postcode near a point. Older SQLite versions (3.49 in the packaged apps, 3.51) pick the
+# postcode index for this query and scan every place without a postcode: 25 s per lookup instead of
+# 0.01 s. Naming the partial index made for it keeps every version fast.
+_NEARBY_SQL = ("SELECT * FROM places {hint} WHERE postcode = '' AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?")
+_NEARBY_HINTED = _NEARBY_SQL.format(hint="INDEXED BY ix_places_nopc_latlon")
+_NEARBY_PLAIN = _NEARBY_SQL.format(hint="")
 
 
 class LocalPlacesProvider:
@@ -60,10 +66,12 @@ class LocalPlacesProvider:
             lon = sum(r["lon"] for r in located) / len(located)
             dlat = NEARBY_M / _DEG_LAT_M
             dlon = dlat / max(math.cos(math.radians(lat)), 0.1)
-            for r in self._con.execute(
-                "SELECT * FROM places WHERE postcode = '' AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
-                (lat - dlat, lat + dlat, lon - dlon, lon + dlon),
-            ):
+            box = (lat - dlat, lat + dlat, lon - dlon, lon + dlon)
+            try:
+                found = self._con.execute(_NEARBY_HINTED, box).fetchall()
+            except sqlite3.OperationalError:  # a dataset imported before that index existed
+                found = self._con.execute(_NEARBY_PLAIN, box).fetchall()
+            for r in found:
                 dist = math.hypot((r["lat"] - lat) * _DEG_LAT_M, (r["lon"] - lon) * _DEG_LAT_M * math.cos(math.radians(lat)))
                 if dist <= NEARBY_M:
                     nearby.append(_to_candidate(r, distance_m=round(dist)))
