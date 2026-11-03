@@ -112,10 +112,23 @@
     }
   });
 
+  // ---------- the name entered in the dashboard: shown in the admin panel ("Herschel's PC") ----------
+  let sentName = "";
+  function sendName() {
+    let name = "";
+    try { name = (localStorage.getItem("ukbf.employee") || "").trim(); } catch (e) { /* storage blocked */ }
+    if (!name || name === sentName) return;
+    sentName = name;
+    fetch("/desktop/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) })
+      .catch(() => { sentName = ""; });
+  }
+  window.addEventListener("storage", sendName);
+
   // ---------- status ----------
   let timer = null;
   async function poll() {
     let busy = false;
+    sendName(); // also picks up a rename (the dashboard saves it in this tab: no storage event)
     try {
       const st = await (await fetch("/desktop/status", { cache: "no-store" })).json();
       if (!st.license.allowed) { location.replace("/desktop/"); return; }

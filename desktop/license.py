@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import platform
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ log = logging.getLogger(__name__)
 CHECK_EVERY_S = {"stable": 60, "test": 60}  # an admin change (stop, paid, block) reaches a running PC within a minute
 CLOCK_SLACK_S = 10 * 60  # small differences between this PC's clock and the server's are normal
 BUILD_MACHINE = "GitHub build machine"
+OS_NAMES = {"win32": "Windows", "darwin": "macOS"}
 DOWNLOAD_KINDS = {"search": "search result", "sheet": "My sheet", "customers": "Potential customers"}
 CONTACT = "Please contact the developer, Tejas Patil, on 7709288629."
 
@@ -131,6 +133,8 @@ class LicenseClient:
         self.store = store  # license.json: the last token and the latest time seen
         self.http = http or httpx.Client(timeout=10)
         self.clock = clock
+        # Shown in the admin panel ("Herschel's PC"): the name entered in Copilot, set by the dashboard.
+        self.user_name = ""
 
     # ---------- local state ----------
     def _load(self) -> dict:
@@ -205,7 +209,8 @@ class LicenseClient:
     def check_online(self) -> LicenseState:
         """Ask the server. Falls back to the saved token when the server can't be reached."""
         try:
-            body = {"machine": self.machine, "version": self.version}
+            body = {"machine": self.machine, "version": self.version, "user": self.user_name,
+                    "computer": platform.node()[:60], "os": OS_NAMES.get(sys.platform, sys.platform)}
             if os.environ.get("GITHUB_ACTIONS") == "true":  # CI's test runs: named so the admin panel can hide them
                 body["label"] = BUILD_MACHINE
             r = self.http.post(f"{self.url}/v1/license", json=body)

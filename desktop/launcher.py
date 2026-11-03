@@ -119,7 +119,7 @@ def run_app(cfg: BuildConfig, paths: Paths, instance: SingleInstance, debug: boo
     os.environ.update(backend_environment(paths))  # before the backend reads its settings
     import app.main
     from app import refresh
-    from desktop.server import SESSION_HEADER, BackendServer, DesktopState, build_app
+    from desktop.server import SESSION_HEADER, BackendServer, DesktopState, build_app, default_name
 
     window_ref: dict = {}
     base = {"url": ""}
@@ -132,6 +132,7 @@ def run_app(cfg: BuildConfig, paths: Paths, instance: SingleInstance, debug: boo
     lic = license_manager(cfg, paths, on_license_change)
     if lic.client is not None:  # every Excel download is recorded with the licence server (row limits)
         app.main.app.state.download_guard = lic.client.record_download
+        lic.client.user_name = default_name()  # until the dashboard sends the name entered there
     upd = updater.Updater(cfg.update_repo, cfg.channel)
     restart = threading.Event()
     state = DesktopState(cfg.version, cfg.channel, lic, paths.logs, upd, focus_secret=instance.focus_secret)

@@ -14,9 +14,11 @@ const TRIAL_OFFLINE_SECONDS = 24 * 3600; // a trial must check in at least daily
 const PAID_OFFLINE_SECONDS = 14 * 24 * 3600;
 const MIN_SECONDS_BETWEEN_CHECKS = 2; // per machine: stops a stuck client hammering the server
 const MACHINE = /^[0-9a-f]{64}$/;
-// Rows each PC may download in total, per kind of Excel file (-1 = no limit). Only rows it hasn't
-// downloaded before count, so downloading the same rows again is free. Change per PC with set_limits.
+// Rows each trial PC may download in total, per kind of Excel file (-1 = no limit). Only rows it hasn't
+// downloaded before count, so downloading the same rows again is free. Paid PCs have no limits.
+// Change per PC with set_limits (that applies to paid PCs too).
 const DEFAULT_LIMITS = { search: -1, sheet: 2000, customers: 200 };
+const PAID_LIMITS = { search: -1, sheet: -1, customers: -1 };
 const KINDS = Object.keys(DEFAULT_LIMITS);
 const ROW_KEY = /^[0-9a-f]{16,64}$/; // the app sends a hash of each row, never the business data
 const MAX_KEYS = 20000;
@@ -64,6 +66,11 @@ async function license(request, env) {
   const machine = String(body.machine || "");
   const version = String(body.version || "").slice(0, 40);
   const label = String(body.label || "").slice(0, 60); // e.g. "GitHub build machine": the first note, if any
+  // Who uses this PC, so the admin panel can show "Herschel's PC": the name entered in Copilot, the
+  // computer's name and its system. Empty values keep what was known.
+  const user = String(body.user || "").slice(0, 60);
+  const computer = String(body.computer || "").slice(0, 60);
+  const os = String(body.os || "").slice(0, 20);
   if (!MACHINE.test(machine)) return json({ error: "bad_request" }, 400);
 
   const t = now();
@@ -71,15 +78,17 @@ async function license(request, env) {
   if (!row) {
     // First activation of this computer: the trial starts now, on the server's clock.
     await env.DB.prepare(
-      "INSERT INTO licenses (machine, plan, revoked, trial_started_at, expires_at, created_at, last_seen_at, last_version, checks, note) " +
-        "VALUES (?, 'trial', 0, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT(machine) DO NOTHING",
-    ).bind(machine, t, t + trialSeconds(env), t, t, version, label).run();
+      "INSERT INTO licenses (machine, plan, revoked, trial_started_at, expires_at, created_at, last_seen_at, last_version, checks, note, user_name, computer, os) " +
+        "VALUES (?, 'trial', 0, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT(machine) DO NOTHING",
+    ).bind(machine, t, t + trialSeconds(env), t, t, version, label, user, computer, os).run();
     await audit(env, machine, "trial_started", `${trialSeconds(env)} seconds`);
     row = await env.DB.prepare("SELECT * FROM licenses WHERE machine = ?").bind(machine).first();
   } else {
     if (row.last_seen_at && t - row.last_seen_at < MIN_SECONDS_BETWEEN_CHECKS) return json({ error: "too_many_requests" }, 429);
-    await env.DB.prepare("UPDATE licenses SET last_seen_at = ?, last_version = ?, checks = checks + 1 WHERE machine = ?")
-      .bind(t, version, machine).run();
+    await env.DB.prepare("UPDATE licenses SET last_seen_at = ?, last_version = ?, checks = checks + 1, " +
+      "user_name = COALESCE(NULLIF(?, ''), user_name), computer = COALESCE(NULLIF(?, ''), computer), " +
+      "os = COALESCE(NULLIF(?, ''), os) WHERE machine = ?")
+      .bind(t, version, user, computer, os, machine).run();
   }
   return json({ token: await sign(env, payloadFor(env, row, t)) });
 }
@@ -92,7 +101,7 @@ function limitsOf(row) {
   } catch {
     own = {};
   }
-  return { ...DEFAULT_LIMITS, ...own };
+  return { ...(row.plan === "paid" ? PAID_LIMITS : DEFAULT_LIMITS), ...own };
 }
 
 async function usageOf(env, machine) {
@@ -266,7 +275,7 @@ async function admin(request, env, url) {
       break;
     case "paid": {
       const at = body.expires_at === undefined || body.expires_at === null ? null : when(body.expires_at);
-      await set("plan = 'paid', revoked = 0, expires_at = ?", at);
+      await set("plan = 'paid', revoked = 0, expires_at = ?, limits = NULL", at); // paid: no download limits
       detail = at === null ? "permanent" : new Date(at * 1000).toISOString();
       break;
     }

@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS licenses (
     last_version TEXT,
     checks INTEGER NOT NULL DEFAULT 0,
     note TEXT NOT NULL DEFAULT '',
-    limits TEXT                                  -- JSON row limits per download kind; missing = the defaults
+    limits TEXT,                                 -- JSON row limits per download kind; missing = the defaults
+    user_name TEXT NOT NULL DEFAULT '',          -- the name the user entered in Copilot (top right)
+    computer TEXT NOT NULL DEFAULT '',           -- the computer's own name, e.g. DESKTOP-4KQ2
+    os TEXT NOT NULL DEFAULT ''                  -- Windows / macOS
 );
 -- Every Excel download (and refused attempt) from the app.
 CREATE TABLE IF NOT EXISTS downloads (

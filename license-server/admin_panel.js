@@ -90,7 +90,7 @@
 
   // ---------- actions ----------
   async function act(pc, body, done, ask) {
-    const who = pc.note || `PC ${pc.machine.slice(0, 12)}`;
+    const who = pc.note || (pc.user_name ? `${pc.user_name}'s PC` : `PC ${pc.machine.slice(0, 12)}`);
     if (ask && !confirm(ask)) return;
     if (env === "production" && !confirm(`This changes a CLIENT's PC: ${who}.\n\nContinue?`)) return;
     try {
@@ -155,7 +155,8 @@
     add("Reset downloads", "quiet", () => act(pc, { action: "reset_downloads" }, "download counts reset",
       "Reset this PC's download counts to zero? Its full limits become available again (the history is kept)."));
     add("Rename", "quiet", () => {
-      const name = prompt("Name for this PC (e.g. \"Client: ACME Ltd\", \"Tejas Windows PC\")", pc.note || "");
+      const name = prompt("Name for this PC (e.g. \"Client: ACME Ltd\", \"Tejas Windows PC\").\n\n" +
+        "Leave it empty to show the name entered in Copilot" + (pc.user_name ? ` ("${pc.user_name}'s PC").` : "."), pc.note || "");
       if (name != null) act(pc, { action: "note", note: name.trim() }, "renamed");
     });
     return row;
@@ -221,6 +222,13 @@
     act(pc, { action: "set_limits", limits: asked }, "download limits changed");
   }
 
+  // Your own name for the PC (Rename) first; otherwise the name its user entered in Copilot.
+  function pcName(pc) {
+    if (pc.note) return pc.note;
+    if (pc.user_name) return `${pc.user_name}'s PC`;
+    return "Unnamed PC";
+  }
+
   // ---------- drawing ----------
   function statusBadge(pc) {
     if (pc.revoked) return el("span", "badge b-blocked", "Blocked");
@@ -269,10 +277,11 @@
       const head = el("div", "pc-head");
       const online = el("span", `online${nowS() - (pc.last_seen_at || 0) < ONLINE_S ? " on" : ""}`);
       online.append(el("i"), document.createTextNode(nowS() - (pc.last_seen_at || 0) < ONLINE_S ? "Copilot open now" : `last seen ${ago(pc.last_seen_at)}`));
-      head.append(el("span", "name", pc.note || "Unnamed PC"), statusBadge(pc), online);
+      head.append(el("span", "name", pcName(pc)), statusBadge(pc), online);
       const meta = el("div", "meta");
       meta.append(
         el("span", "id", `ID ${pc.machine.slice(0, 12)}`),
+        ...(pc.os || pc.computer ? [el("span", "", [pc.os, pc.computer].filter(Boolean).join(" · "))] : []),
         el("span", "", `First opened ${date(pc.trial_started_at || pc.created_at)}`),
         el("span", "", `Version ${pc.last_version || "–"}`),
       );

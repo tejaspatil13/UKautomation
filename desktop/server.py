@@ -138,6 +138,21 @@ def build_app(main_app: FastAPI, state: DesktopState) -> FastAPI:
             log.info("window connected")
         return _status(main_app, state)
 
+    @outer.post("/desktop/user")
+    async def user_name(request: Request):
+        """The name entered in the dashboard (top right): sent with licence checks for the admin panel."""
+        try:
+            name = str((await request.json()).get("name", "")).strip()
+        except ValueError:
+            name = ""
+        client = getattr(state.license, "client", None)
+        if not _NAME_OK.match(name) or client is None:
+            return Response(status_code=204)
+        if name != client.user_name:
+            client.user_name = name
+            state.license.request_check()  # tell the licence server now, not at the next minute
+        return Response(status_code=204)
+
     @outer.post("/desktop/license/check")
     async def license_check():
         import asyncio

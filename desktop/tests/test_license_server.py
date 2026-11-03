@@ -168,3 +168,29 @@ def test_a_stopped_pc_cannot_download(tmp_path, machine):
 def test_downloads_need_the_licence_server(tmp_path, machine):
     c = app_client(tmp_path, machine, url="http://127.0.0.1:9")
     assert "internet connection" in c.record_download("sheet", ["r1"], "z.xlsx")
+
+
+def test_paid_pcs_have_no_download_limits(tmp_path, machine):
+    c = app_client(tmp_path, machine)
+    c.check_online()
+    admin(machine, action="set_limits", limits={"customers": 5})
+    assert c.record_download("sheet", [f"r{i}" for i in range(2000)], "a.xlsx") is None
+    assert c.record_download("sheet", ["one more"], "b.xlsx") is not None  # trial: 2,000 reached
+    admin(machine, action="paid")
+    assert c.record_download("sheet", [f"x{i}" for i in range(5000)], "c.xlsx") is None  # paid: no limit
+    assert c.record_download("customers", [f"c{i}" for i in range(500)], "d.xlsx") is None  # trial's custom limit cleared
+    assert usage(machine)["sheet"] == {"used": 7000, "limit": -1}
+    admin(machine, action="set_limits", limits={"customers": 600})  # a limit set on purpose still applies
+    assert c.record_download("customers", [f"e{i}" for i in range(200)], "e.xlsx") is not None
+
+
+def test_the_pc_reports_who_uses_it(tmp_path, machine):
+    c = app_client(tmp_path, machine)
+    c.user_name = "Herschel"
+    c.check_online()
+    row = httpx.get(f"{URL}/admin/licenses/{machine}", headers={"Authorization": f"Bearer {ADMIN}"}).json()["license"]
+    assert row["user_name"] == "Herschel" and row["computer"] and row["os"] in ("macOS", "Windows", "linux")
+    c.user_name = "Herschel Shah"
+    check(c)
+    row = httpx.get(f"{URL}/admin/licenses/{machine}", headers={"Authorization": f"Bearer {ADMIN}"}).json()["license"]
+    assert row["user_name"] == "Herschel Shah"

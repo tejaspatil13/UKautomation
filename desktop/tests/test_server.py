@@ -209,3 +209,19 @@ def test_new_searches_wait_for_a_required_update(make):
         assert client.get("/api/health").status_code == 200  # reading is still allowed
         upd.required = False
         assert client.post("/api/jobs", json={"postcode": "CV1 1FJ"}).status_code != 403
+
+
+def test_the_dashboard_name_goes_to_the_licence_server(make):
+    client_obj = SimpleNamespace(user_name="")
+    lic = SimpleNamespace(state=LicenseState("active", "trial"), client=client_obj, checks=[])
+    lic.request_check = lambda: lic.checks.append(1)
+    client, state = make()
+    state.license = lic
+    with client:
+        login(client, state)
+        assert client.post("/desktop/user", json={"name": "Herschel"}).status_code == 204
+        assert client_obj.user_name == "Herschel" and lic.checks == [1]
+        client.post("/desktop/user", json={"name": "Herschel"})
+        assert lic.checks == [1]  # unchanged: no extra check
+        client.post("/desktop/user", json={"name": "<script>"})
+        assert client_obj.user_name == "Herschel"  # not a name: ignored
