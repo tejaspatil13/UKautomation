@@ -44,7 +44,7 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
-icon = ROOT / "desktop" / "assets" / ("copilot.ico" if sys.platform == "win32" else "copilot.png")
+icon = ROOT / "desktop" / "assets" / {"win32": "copilot.ico", "darwin": "copilot.icns"}.get(sys.platform, "copilot.png")
 exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
@@ -55,3 +55,24 @@ exe = EXE(
     upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="Copilot", upx=False)
+
+if sys.platform == "darwin":  # macOS: a normal Copilot.app (Velopack packs and updates the bundle)
+    import json
+
+    config = ROOT / "desktop" / "build_config.json"
+    version = json.loads(config.read_text())["version"] if config.exists() else "0.0.0"
+    short = version.split("-")[0]
+    app = BUNDLE(
+        coll,
+        name="Copilot.app",
+        icon=str(icon),
+        bundle_identifier="com.tejaspatil.copilot",
+        version=short,
+        info_plist={
+            "CFBundleDisplayName": "Copilot",
+            "CFBundleShortVersionString": short,
+            "CFBundleVersion": version,
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "12.0",
+        },
+    )

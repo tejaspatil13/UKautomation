@@ -38,6 +38,10 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
     environment: ${{ inputs.release == 'stable' && 'production' || 'test' }}
     defaults:
       run:
@@ -290,3 +294,87 @@ jobs:
           if (-not $downloaded) { throw "The previous release did not download $new" }
           if ($build -notlike "$new *") { throw "After closing, the installed version is '$build', expected $new" }
           "Update test passed: $($prev.tag_name) updated itself to $build"
+
+  # The same test build for macOS (Apple Silicon), added to the same GitHub release on its own update
+  # channel ("osx-test"), so a Mac with the test build updates itself like the Windows test PCs.
+  mac:
+    needs: build
+    if: needs.build.outputs.publish == 'true' && needs.build.outputs.channel == 'test'
+    runs-on: macos-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements*.txt
+            desktop/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build the dashboard
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r desktop/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Desktop tests (on macOS)
+        working-directory: desktop
+        run: python -m pytest -q
+
+      - name: Prepare build configuration
+        run: |
+          python desktop/prepare_build.py --channel test --version "${{ needs.build.outputs.version }}" \
+            --license-url "${{ vars.LICENSE_URL_TEST }}" --license-public-key "${{ vars.LICENSE_PUBLIC_KEY_TEST }}" \
+            --update-repo "${{ github.server_url }}/${{ github.repository }}"
+
+      - name: Package with PyInstaller
+        run: pyinstaller desktop/copilot.spec --noconfirm --distpath dist --workpath build/pyinstaller
+
+      - name: Self-test the packaged app
+        run: |
+          export COPILOT_HOME="$RUNNER_TEMP/copilot-selftest"
+          set +e
+          dist/Copilot.app/Contents/MacOS/Copilot --self-test
+          code=$?
+          cat "$COPILOT_HOME/logs/selftest.json" || true
+          if [ $code -ne 0 ]; then tail -n 80 "$COPILOT_HOME/logs/copilot.log" || true; exit $code; fi
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version "$VPK_VERSION"
+
+      - name: Create installer and update packages
+        run: |
+          vpk pack --packId CopilotAppTest --packVersion "${{ needs.build.outputs.version }}" \
+            --packDir dist/Copilot.app --mainExe Copilot --packTitle "Copilot" --packAuthors "Copilot" \
+            --icon desktop/assets/copilot.icns --channel osx-test --outputDir Releases-mac
+          ls -la Releases-mac
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Copilot-mac-${{ needs.build.outputs.version }}
+          path: Releases-mac/
+          retention-days: 30
+
+      - name: Add to the GitHub release
+        run: |
+          vpk upload github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" \
+            --outputDir Releases-mac --channel osx-test --merge --publish --pre \
+            --releaseName "Copilot ${{ needs.build.outputs.version }}" --tag "v${{ needs.build.outputs.version }}"
