@@ -1,9 +1,11 @@
 """`Copilot.exe --self-test`: proves the packaged app works on this computer, without opening a window.
 
-Run by the Windows build after packaging (no Python on the runner's PATH is used). Checks every
-Windows-specific fix: time zones, bundled files, the DuckDB extension, imports through the exe,
-the local server, its session cookie and Host checks, and the dashboard files. Results are written
-to logs/selftest.json; the exit code is 0 only if everything passed.
+Run by the Windows and Mac builds after packaging (no Python on the runner's PATH is used). Checks
+every Windows-specific fix: time zones, bundled files, the DuckDB extension, imports through the exe,
+the local server, its session cookie and Host checks, and the dashboard files; then runs a real search
+end to end (rating list, business listings, phone match, Excel file) on a tiny synthetic dataset, in a
+temporary data folder, never the user's data. Results are written to logs/selftest.json; the exit code
+is 0 only if everything passed.
 """
 import json
 import logging
@@ -22,8 +24,14 @@ from desktop.config import BuildConfig, Paths, backend_environment, resource_dir
 log = logging.getLogger(__name__)
 
 
+SEARCH_LIMIT_S = 60  # the tiny test search takes about a second; a slow database query shows up here
+
+
 def run(cfg: BuildConfig, paths: Paths) -> int:
     os.environ.update(backend_environment(paths))
+    # The search check needs datasets: a throwaway folder, so the self-test never touches real data.
+    data = Path(tempfile.mkdtemp(prefix="copilot-selftest-"))
+    os.environ.update({"UKA_DATA_DIR": str(data), "UKA_AUTO_IMPORT_ON_START": "false", "UKA_AUTO_REFRESH": "false"})
     results: dict[str, str] = {}
 
     def check(name, fn):
@@ -39,7 +47,8 @@ def run(cfg: BuildConfig, paths: Paths) -> int:
     check("description_codes", _description_codes)
     check("duckdb_httpfs", _duckdb_httpfs)
     check("import_subprocess", lambda: _import_subprocess(paths))
-    check("server", _server)
+    check("test_datasets", lambda: _test_datasets(data))
+    check("server_and_search", _server)
     check("velopack", lambda: __import__("velopack"))
     check("webview", _webview)
     results["build"] = f"{cfg.version} ({cfg.channel})"
@@ -118,9 +127,74 @@ def _server():
             assert c.get("/api/meta").status_code == 200
             assert '<div id="root">' in c.get("/").text, "dashboard not served"
             assert c.get("/desktop/status").json()["backend_ready"]
+            _search(c)
     finally:
         server.stop()
         time.sleep(0.2)
+
+
+def _vo_line(n, uarn, number, street, postcode, rv, desc="SHOP AND PREMISES", code="CS"):
+    """One rating-list entry in the VO asterisk-delimited layout (28 fields)."""
+    f = [""] * 28
+    f[0], f[1], f[3], f[4], f[5], f[6], f[7] = str(n), "4610", f"REF{n}", code, desc, uarn, f"{number}, {street}, COVENTRY"
+    f[9], f[10], f[11], f[14], f[17], f[19] = number, street, "COVENTRY", postcode, str(rv), str(n)
+    return "*".join(f)
+
+
+def _test_datasets(data: Path):
+    """A tiny rating list and business-listings database, built the way the real imports build them."""
+    import sqlite3
+    import zipfile
+
+    from app.contacts.overture_import import SCHEMA
+    from app.voa.importer import import_zip
+
+    data.mkdir(parents=True, exist_ok=True)
+    zip_path = data / "vo-test.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("uk-englandwales-ndr-2026-listentries-test-csv.csv", "\n".join([
+            _vo_line(1, "300675222", "13", "TRINITY STREET", "CV1 1FJ", 22000),
+            _vo_line(2, "113420222", "15", "TRINITY STREET", "CV1 1FJ", 10750, "HAIRDRESSING SALON AND PREMISES", "CS3"),
+        ]) + "\n")
+    import_zip(zip_path, data / "voa.sqlite", list_year=2026)
+    zip_path.unlink()
+    con = sqlite3.connect(data / "places.sqlite")
+    con.executescript(SCHEMA)
+    con.executemany("INSERT INTO places VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+        ("a", "Games Workshop", "hobby_store", "13 Trinity St", "Coventry", "CV1 1FJ", "+442476227311", "", 0.95, "open",
+         52.4093, -1.5097, "meta"),
+        ("b", "Trinity Barbers", "barber", "15 Trinity Street", "Coventry", "", "02476111111", "", 0.8, None,
+         52.4094, -1.5098, "meta"),
+    ])
+    # The same indexes as the real import (overture_import): the nearby lookup must use the partial one.
+    con.execute("CREATE INDEX ix_places_postcode ON places(postcode)")
+    con.execute("CREATE INDEX ix_places_nopc_latlon ON places(lat, lon) WHERE postcode = ''")
+    con.execute("INSERT INTO meta VALUES ('release', 'selftest')")
+    con.commit()
+    from app.contacts.local_places import _NEARBY_HINTED
+
+    plan = " ".join(r[-1] for r in con.execute("EXPLAIN QUERY PLAN " + _NEARBY_HINTED, (0, 1, 0, 1)))
+    con.close()
+    assert "ix_places_nopc_latlon" in plan, f"nearby lookup would scan the table on this SQLite: {plan}"
+
+
+def _search(c: httpx.Client):
+    """A real search through the app, as the dashboard does it: premises, phone match, Excel file."""
+    r = c.post("/api/jobs?employee=Selftest", json={"postcode": "CV1 1FJ"})
+    assert r.status_code in (200, 202), f"search refused: {r.status_code} {r.text[:200]}"
+    job_id, started = r.json()["id"], time.monotonic()
+    while True:
+        job = c.get(f"/api/jobs/{job_id}").json()
+        if job["state"] not in ("queued", "running"):
+            break
+        assert time.monotonic() - started < SEARCH_LIMIT_S, f"search still running after {SEARCH_LIMIT_S} s"
+        time.sleep(0.5)
+    assert job["state"] == "completed", f"search ended as {job['state']}: {job.get('message')}"
+    phones = {r.get("phone") for r in c.get(f"/api/jobs/{job_id}/records").json()["items"]}
+    assert {"+44 24 7622 7311", "+44 24 7611 1111"} <= phones, f"phone numbers not matched: {phones}"
+    xlsx = c.get(f"/api/jobs/{job_id}/download")
+    assert xlsx.status_code == 200 and xlsx.content[:2] == b"PK", "Excel download failed"
+    log.info("self-test search: %s premises in %.1f s", len(phones), time.monotonic() - started)
 
 
 def _webview():
